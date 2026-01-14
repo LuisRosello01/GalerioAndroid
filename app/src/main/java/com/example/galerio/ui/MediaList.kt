@@ -93,7 +93,8 @@ fun MediaList(
                     // Agrupamos por fecha
                     val formatter = remember { DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault()) }
                     val groupedMediaItems = mediaItems.groupBy { mediaItem ->
-                        val timestampInMillis = mediaItem.dateModified * 1000
+                        // Fix: mediaItem.dateModified is already in milliseconds
+                        val timestampInMillis = mediaItem.dateModified
                         Instant.ofEpochMilli(timestampInMillis)
                             .atZone(ZoneId.systemDefault())
                             .toLocalDate()
