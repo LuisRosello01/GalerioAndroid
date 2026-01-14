@@ -29,21 +29,37 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import coil.ImageLoader
+import coil.compose.rememberAsyncImagePainter
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import com.example.galerio.data.model.MediaItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import androidx.core.net.toUri
 
 @Composable
-fun VideoCard(videoUri: Uri, duration: Long?, context: Context, onClick: () -> Unit) {
+fun VideoCard(
+    mediaItem: MediaItem,
+    context: Context,
+    imageLoader: ImageLoader,
+    onClick: () -> Unit
+) {
     val coroutineScope = rememberCoroutineScope()
 
-    // Genera la miniatura del video dependiendo de la versión de Android
     var videoThumbnail by remember { mutableStateOf<Bitmap?>(null) }
+    var remoteThumbnailFailed by remember(mediaItem.thumbnailUri) { mutableStateOf(false) }
 
-    LaunchedEffect(videoUri) {
-        coroutineScope.launch {
-            videoThumbnail = loadVideoThumbnail(videoUri, context)
+    val useRemoteThumbnail = mediaItem.thumbnailUri?.isNotEmpty() == true && !remoteThumbnailFailed
+    val isLocalVideo = remember(mediaItem.uri) { mediaItem.uri.startsWith("content://") }
+
+    LaunchedEffect(mediaItem.uri, useRemoteThumbnail) {
+        if (!useRemoteThumbnail && isLocalVideo) {
+            coroutineScope.launch {
+                videoThumbnail = loadVideoThumbnail(mediaItem.uri.toUri(), context)
+            }
         }
     }
 
@@ -56,24 +72,44 @@ fun VideoCard(videoUri: Uri, duration: Long?, context: Context, onClick: () -> U
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Box {
-            if (videoThumbnail != null) {
-                // Muestra la miniatura generada del video
-                Image(
-                    bitmap = videoThumbnail!!.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                // Si no se puede generar la miniatura, muestra un color de fondo
-                Box(modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Gray))
+            when {
+                useRemoteThumbnail -> {
+                    Image(
+                        painter = rememberAsyncImagePainter(
+                            model = ImageRequest.Builder(context)
+                                .data(mediaItem.thumbnailUri)
+                                .size(256)
+                                .crossfade(true)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .build(),
+                            imageLoader = imageLoader,
+                            onError = { remoteThumbnailFailed = true }
+                        ),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                videoThumbnail != null -> {
+                    Image(
+                        bitmap = videoThumbnail!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                else -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Gray)
+                    )
+                }
             }
 
-            // Duración del video
             Text(
-                text = formatDuration(duration ?: 0),
+                text = formatDuration(mediaItem.duration ?: 0),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(4.dp),
@@ -112,5 +148,5 @@ fun formatDuration(durationMillis: Long): String {
     val totalSeconds = durationMillis / 1000
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
-    return String.format(Locale.getDefault(), "%d:%02d ▶️", minutes, seconds)
+    return String.format(Locale.getDefault(), "%d:%02d \u25B6\uFE0F", minutes, seconds)
 }

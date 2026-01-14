@@ -28,7 +28,7 @@ import coil.request.ImageRequest
 import kotlinx.coroutines.launch
 
 @Composable
-fun FullScreenImage(imageUri: Uri?, onDismiss: () -> Unit) {
+fun FullScreenImage(imageUri: String?, onDismiss: () -> Unit) {
     var scale by remember { mutableStateOf(0.5f) } // Estado inicial de escala para el zoom-in/out
     var offset by remember { mutableStateOf(Offset.Zero) } // Para el desplazamiento
     val animatedScale by animateFloatAsState(targetValue = if (scale > 0.5f) scale else 1f) // Animación de escala
