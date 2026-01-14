@@ -71,7 +71,7 @@ interface CloudApiService {
         @Path("id") mediaId: String
     ): Response<okhttp3.ResponseBody>
 
-    @DELETE("media/delete/{id}")
+    @DELETE("media/delete/single/{id}")
     suspend fun deleteMedia(
         @Header("Authorization") token: String,
         @Path("id") mediaId: String
