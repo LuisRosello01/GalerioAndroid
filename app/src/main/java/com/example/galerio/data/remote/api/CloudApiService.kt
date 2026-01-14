@@ -30,7 +30,7 @@ interface CloudApiService {
         @Body request: RefreshTokenRequest
     ): Response<RefreshTokenResponse>
 
-    @POST("/logout")
+    @GET("/logout")
     suspend fun logout(
         @Header("Authorization") token: String
     ): Response<LogoutResponse>
@@ -44,21 +44,22 @@ interface CloudApiService {
         @Query("since") since: Long? = null // Timestamp para sincronización incremental
     ): Response<CloudMediaListResponse>
 
-    @GET("media/{id}")
+    @GET("media/files/info/{id}")
     suspend fun getMediaById(
         @Header("Authorization") token: String,
         @Path("id") mediaId: String
     ): Response<CloudMediaItem>
 
     @Multipart
-    @POST("media/upload")
+    @POST("media/upload/{userId}")
     suspend fun uploadMedia(
         @Header("Authorization") token: String,
+        @Path("userId") userId: String,
         @Part file: MultipartBody.Part,
         @Part("metadata") metadata: RequestBody
     ): Response<UploadMediaResponse>
 
-    @GET("media/{id}/download")
+    @GET("media/download/access_file/{id}")
     suspend fun downloadMedia(
         @Header("Authorization") token: String,
         @Path("id") mediaId: String
@@ -70,7 +71,7 @@ interface CloudApiService {
         @Path("id") mediaId: String
     ): Response<okhttp3.ResponseBody>
 
-    @DELETE("media/{id}")
+    @DELETE("media/delete/{id}")
     suspend fun deleteMedia(
         @Header("Authorization") token: String,
         @Path("id") mediaId: String

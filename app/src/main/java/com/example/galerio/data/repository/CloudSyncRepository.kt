@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -134,11 +135,14 @@ class CloudSyncRepository @Inject constructor(
                     Log.d(TAG, "[SYNC] Filters applied - type: ${responseBody.filters.type}, sort_by: ${responseBody.filters.sortBy}")
                 }
 
-                // Convertir CloudMediaItem a MediaItem
+                        // Convertir CloudMediaItem a MediaItem
                 val cloudMediaItems = cloudItems.map { cloudItem ->
+                    if (!cloudItem.hasThumbnail) {
+                         Log.d(TAG, "Item ${cloudItem.id} reports hasThumbnail=false")
+                    }
                     val mediaType = cloudItem.getMediaType()
                     MediaItem(
-                        uri = cloudItem.getFileUrl(),
+                        uri = cloudItem.getFileUrl(CloudApiService.BASE_URL),
                         type = mediaType,
                         dateModified = cloudItem.lastModified,
                         relativePath = null,
@@ -146,9 +150,9 @@ class CloudSyncRepository @Inject constructor(
                         isCloudItem = true,
                         cloudId = cloudItem.id,
                         hasThumbnail = cloudItem.hasThumbnail,
-                        thumbnailUri = cloudItem.getThumbnailUrl()
+                        thumbnailUri = cloudItem.getThumbnailUrl(CloudApiService.BASE_URL)
                     )
-                }
+                }.sortedByDescending { it.dateModified }
 
                 // Actualizar caché
                 cachedCloudItems = cloudMediaItems
@@ -187,6 +191,7 @@ class CloudSyncRepository @Inject constructor(
             _syncStatus.value = SyncStatus.UPLOADING
 
             val token = authManager.getToken() ?: return@withContext Result.failure(Exception("No auth token"))
+            val user = authManager.currentUser.first() ?: return@withContext Result.failure(Exception("No user found"))
 
             // Crear el multipart body
             val requestBody = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
@@ -198,7 +203,7 @@ class CloudSyncRepository @Inject constructor(
                 """{"type":"${mediaItem.type}","dateModified":${mediaItem.dateModified}}"""
             )
 
-            val response = apiService.uploadMedia("Bearer $token", filePart, metadata)
+            val response = apiService.uploadMedia("Bearer $token", user.id, filePart, metadata)
 
             if (response.isSuccessful) {
                 val cloudItem = response.body()?.mediaItem

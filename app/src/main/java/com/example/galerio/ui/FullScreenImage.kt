@@ -27,14 +27,32 @@ import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import kotlinx.coroutines.launch
 
+import coil.ImageLoader
+
 @Composable
-fun FullScreenImage(imageUri: String?, onDismiss: () -> Unit) {
+fun FullScreenImage(
+    imageUri: String?,
+    imageLoader: ImageLoader? = null,
+    onDismiss: () -> Unit
+) {
     var scale by remember { mutableStateOf(0.5f) } // Estado inicial de escala para el zoom-in/out
     var offset by remember { mutableStateOf(Offset.Zero) } // Para el desplazamiento
     val animatedScale by animateFloatAsState(targetValue = if (scale > 0.5f) scale else 1f) // Animación de escala
     var isLoading by remember { mutableStateOf(true) } // Estado de carga de la imagen
 
     val scope = rememberCoroutineScope() // Para controlar la animación
+    val context = LocalContext.current
+
+    val imageRequest = remember(imageUri) {
+        ImageRequest.Builder(context)
+            .data(imageUri)
+            .crossfade(true)
+            .listener(
+                onError = { _, _ -> isLoading = false },
+                onSuccess = { _, _ -> isLoading = false }
+            )
+            .build()
+    }
 
     Box(
         modifier = Modifier
@@ -74,17 +92,14 @@ fun FullScreenImage(imageUri: String?, onDismiss: () -> Unit) {
             shape = RoundedCornerShape(0.dp),
             colors = CardDefaults.cardColors(Color.Transparent)
         ) {
+            val painter = if (imageLoader != null) {
+                rememberAsyncImagePainter(model = imageRequest, imageLoader = imageLoader)
+            } else {
+                rememberAsyncImagePainter(model = imageRequest)
+            }
+
             Image(
-                painter = rememberAsyncImagePainter(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(imageUri)
-                        .crossfade(true)
-                        .listener(
-                            onError = { _, _ -> isLoading = false },
-                            onSuccess = { _, _ -> isLoading = false }
-                        )
-                        .build()
-                ),
+                painter = painter,
                 contentDescription = null,
                 //contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

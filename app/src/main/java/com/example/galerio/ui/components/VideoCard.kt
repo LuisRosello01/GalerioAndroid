@@ -82,9 +82,14 @@ fun VideoCard(
                                 .crossfade(true)
                                 .diskCachePolicy(CachePolicy.ENABLED)
                                 .memoryCachePolicy(CachePolicy.ENABLED)
+                                .listener(
+                                    onError = { req, res ->
+                                        android.util.Log.e("VideoCard", "Error loading thumb ${mediaItem.thumbnailUri}: ${res.throwable.message}")
+                                        remoteThumbnailFailed = true
+                                    }
+                                )
                                 .build(),
-                            imageLoader = imageLoader,
-                            onError = { remoteThumbnailFailed = true }
+                            imageLoader = imageLoader
                         ),
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),

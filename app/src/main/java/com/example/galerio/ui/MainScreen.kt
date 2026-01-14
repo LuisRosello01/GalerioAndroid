@@ -64,7 +64,10 @@ fun MainScreen(
                             selectedMediaUri = null // Cerrar el video y volver a la lista
                         }
                     } else {
-                        FullScreenImage(imageUri = uri) {
+                        FullScreenImage(
+                            imageUri = uri,
+                            imageLoader = imageLoader
+                        ) {
                             selectedMediaUri = null // Cerrar la imagen y volver a la lista
                         }
                     }

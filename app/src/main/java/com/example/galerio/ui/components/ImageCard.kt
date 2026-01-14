@@ -58,13 +58,16 @@ fun ImageCard(
                         .crossfade(true)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .memoryCachePolicy(CachePolicy.ENABLED)
+                        .listener(
+                            onError = { request, result ->
+                                android.util.Log.e("ImageCard", "Error loading image $imageUri: ${result.throwable.message}", result.throwable)
+                                hasError = true
+                                if (useRemoteThumbnail) remoteThumbnailFailed = true
+                            },
+                            onSuccess = { _, _ -> hasError = false }
+                        )
                         .build(),
-                    imageLoader = imageLoader,
-                    onError = {
-                        hasError = true
-                        if (useRemoteThumbnail) remoteThumbnailFailed = true
-                    },
-                    onSuccess = { hasError = false }
+                    imageLoader = imageLoader
                 ),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
