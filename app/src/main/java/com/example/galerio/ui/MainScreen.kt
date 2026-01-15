@@ -32,11 +32,9 @@ fun MainScreen(
 
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
 
-    LaunchedEffect(isAuthenticated) {
-        if (!isAuthenticated) {
-            onLogout()
-        }
-    }
+    // El manejo de navegación por estado de autenticación se realiza en MainActivity
+    // Evitamos duplicar la lógica aquí para prevenir bucles de redirección
+    // al inicializarse el ViewModel con valor false por defecto.
 
     Scaffold(
         topBar = {
