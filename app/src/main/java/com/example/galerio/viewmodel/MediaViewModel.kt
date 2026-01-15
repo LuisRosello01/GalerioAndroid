@@ -6,9 +6,16 @@ import androidx.lifecycle.viewModelScope
 import com.example.galerio.data.model.MediaItem
 import com.example.galerio.data.repository.MediaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -19,6 +26,23 @@ class MediaViewModel @Inject constructor(
 
     private val _mediaItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val mediaItems: StateFlow<List<MediaItem>> = _mediaItems.asStateFlow()
+
+    // Lógica de agrupación movida al ViewModel para optimizar la UI
+    val groupedMediaItems: StateFlow<Map<String, List<MediaItem>>> = _mediaItems
+        .map { items ->
+            val formatter = DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault())
+            items.groupBy { mediaItem ->
+                Instant.ofEpochMilli(mediaItem.dateModified)
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate()
+                    .format(formatter)
+            }
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyMap()
+        )
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()

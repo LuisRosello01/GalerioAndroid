@@ -11,15 +11,6 @@
             </PendingDiffInfo>
           </value>
         </entry>
-        <entry key="$PROJECT_DIR$/app/src/main/java/com/example/galerio/GalerioApplication.kt">
-          <value>
-            <PendingDiffInfo>
-              <option name="filePath" value="$PROJECT_DIR$/app/src/main/java/com/example/galerio/GalerioApplication.kt" />
-              <option name="originalContent" value="package com.example.galerio&#10;&#10;import android.app.Application&#10;import dagger.hilt.android.HiltAndroidApp&#10;&#10;@HiltAndroidApp&#10;class GalerioApplication : Application()&#10;" />
-              <option name="updatedContent" value="package com.example.galerio&#10;&#10;import android.app.Application&#10;import dagger.hilt.android.HiltAndroidApp&#10;&#10;@HiltAndroidApp&#10;class GalerioApplication : Application()&#10;" />
-            </PendingDiffInfo>
-          </value>
-        </entry>
       </map>
     </option>
   </component>

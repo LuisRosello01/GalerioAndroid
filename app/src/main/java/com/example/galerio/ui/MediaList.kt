@@ -31,10 +31,8 @@ import com.example.galerio.data.model.MediaType
 import com.example.galerio.ui.components.ImageCard
 import com.example.galerio.ui.components.VideoCard
 import com.example.galerio.viewmodel.MediaViewModel
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
+// Imports removed
+
 
 // Función para mostrar la lista de imágenes en una cuadrícula
 @OptIn(ExperimentalMaterial3Api::class)
@@ -90,18 +88,8 @@ fun MediaList(
                 }
 
                 else -> {
-                    // Agrupamos por fecha
-                    val formatter = remember { DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault()) }
-                    val groupedMediaItems = mediaItems.groupBy { mediaItem ->
-                        // Fix: mediaItem.dateModified is already in milliseconds
-                        val timestampInMillis = mediaItem.dateModified
-                        Instant.ofEpochMilli(timestampInMillis)
-                            .atZone(ZoneId.systemDefault())
-                            .toLocalDate()
-                            .format(formatter)
-                    }
-
-                    //Log.d("MediaList", "Grouped media items by date: $groupedMediaItems")
+                    // Usamos la lista agrupada desde el ViewModel
+                    val groupedMediaItems by viewModel.groupedMediaItems.collectAsState()
 
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(3),
