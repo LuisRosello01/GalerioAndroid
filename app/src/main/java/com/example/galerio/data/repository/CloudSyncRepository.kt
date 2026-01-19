@@ -104,10 +104,6 @@ class CloudSyncRepository @Inject constructor(
 
                 Log.d(TAG, "[SYNC] Step 5: Response received - isSuccessful=${cloudResponse.isSuccessful}, code=${cloudResponse.code()}")
 
-                // Log raw response for debugging
-                val rawResponse = cloudResponse.raw()
-                Log.d(TAG, "[SYNC] Raw response headers: ${rawResponse.headers}")
-
                 // Try to read the raw body (be careful with large responses)
                 if (!cloudResponse.isSuccessful) {
                     _syncStatus.value = SyncStatus.ERROR
@@ -137,10 +133,11 @@ class CloudSyncRepository @Inject constructor(
 
                         // Convertir CloudMediaItem a MediaItem
                 val cloudMediaItems = cloudItems.map { cloudItem ->
+                    val mediaType = cloudItem.getMediaType()
+
                     if (!cloudItem.hasThumbnail) {
                          Log.d(TAG, "Item ${cloudItem.id} reports hasThumbnail=false")
                     }
-                    val mediaType = cloudItem.getMediaType()
                     MediaItem(
                         uri = cloudItem.getFileUrl(CloudApiService.BASE_URL),
                         type = mediaType,
@@ -200,7 +197,7 @@ class CloudSyncRepository @Inject constructor(
             // Metadata en JSON (ajustar según tu API)
             val metadata = okhttp3.RequestBody.create(
                 "application/json".toMediaTypeOrNull(),
-                """{"type":"${mediaItem.type}","dateModified":${mediaItem.dateModified}}"""
+                """{"type":"${mediaItem.type.name.lowercase()}","dateModified":${mediaItem.dateModified}}"""
             )
 
             val response = apiService.uploadMedia("Bearer $token", user.id, filePart, metadata)

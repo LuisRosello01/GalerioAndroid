@@ -74,9 +74,10 @@ data class CloudMediaItem(
      * Convierte el tipo de string a MediaType enum
      */
     fun getMediaType(): MediaType {
-        return when (type.lowercase()) {
-            "image" -> MediaType.Image
-            "video" -> MediaType.Video
+        val lowerType = type.lowercase()
+        return when {
+            lowerType.contains("video") -> MediaType.Video
+            lowerType.contains("image") -> MediaType.Image
             else -> MediaType.Image
         }
     }

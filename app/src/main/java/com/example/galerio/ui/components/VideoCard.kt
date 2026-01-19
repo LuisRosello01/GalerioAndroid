@@ -11,8 +11,12 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -83,7 +87,7 @@ fun VideoCard(
                                 .diskCachePolicy(CachePolicy.ENABLED)
                                 .memoryCachePolicy(CachePolicy.ENABLED)
                                 .listener(
-                                    onError = { req, res ->
+                                    onError = { _, res ->
                                         android.util.Log.e("VideoCard", "Error loading thumb ${mediaItem.thumbnailUri}: ${res.throwable.message}")
                                         remoteThumbnailFailed = true
                                     }
@@ -113,14 +117,30 @@ fun VideoCard(
                 }
             }
 
-            Text(
-                text = formatDuration(mediaItem.duration ?: 0),
+            mediaItem.duration?.let { duration ->
+                Text(
+                    text = formatDuration(duration),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 8.dp, end = 8.dp)
+                        .background(
+                            Color.Black.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(4.dp)
+                        )
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+
+            Icon(
+                imageVector = Icons.Filled.PlayArrow,
+                contentDescription = "Play",
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(4.dp),
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.bodySmall
+                    .align(Alignment.Center)
+                    .size(48.dp),
+                tint = Color.White.copy(alpha = 0.87f)
             )
         }
     }
@@ -132,14 +152,11 @@ suspend fun loadVideoThumbnail(videoUri: Uri, context: Context): Bitmap? {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 context.contentResolver.loadThumbnail(videoUri, Size(200, 200), null)
             } else {
-                val fileDescriptor = context.contentResolver.openFileDescriptor(videoUri, "r")?.fileDescriptor
-                if (fileDescriptor != null) {
+                context.contentResolver.openFileDescriptor(videoUri, "r")?.use { pfd ->
                     ThumbnailUtils.createVideoThumbnail(
-                        fileDescriptor.toString(),
+                        pfd.fileDescriptor.toString(),
                         MediaStore.Video.Thumbnails.MINI_KIND
                     )
-                } else {
-                    null
                 }
             }
         } catch (e: Exception) {
@@ -151,7 +168,13 @@ suspend fun loadVideoThumbnail(videoUri: Uri, context: Context): Bitmap? {
 
 fun formatDuration(durationMillis: Long): String {
     val totalSeconds = durationMillis / 1000
-    val minutes = totalSeconds / 60
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return String.format(Locale.getDefault(), "%d:%02d \u25B6\uFE0F", minutes, seconds)
+
+    return if (hours > 0) {
+        String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
+    }
 }

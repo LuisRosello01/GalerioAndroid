@@ -161,7 +161,8 @@ open class MediaRepository(
         val mediaList = mutableListOf<MediaItem>()
         val projection = arrayOf(
             MediaStore.Video.Media._ID,
-            MediaStore.Video.Media.DATE_MODIFIED
+            MediaStore.Video.Media.DATE_MODIFIED,
+            MediaStore.Video.Media.DURATION
         )
         val sortOrder = "${MediaStore.Video.Media.DATE_MODIFIED} DESC"
 
@@ -174,10 +175,12 @@ open class MediaRepository(
         )?.use { cursor ->
             val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)
             val dateModifiedColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
+            val durationColumn = cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DURATION)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idColumn)
                 val dateModified = cursor.getLong(dateModifiedColumn)
+                val duration = cursor.getLong(durationColumn)
                 val contentUri = ContentUris.withAppendedId(
                     MediaStore.Video.Media.EXTERNAL_CONTENT_URI,
                     id
@@ -186,7 +189,8 @@ open class MediaRepository(
                     MediaItem(
                         uri = contentUri.toString(),
                         type = MediaType.Video,
-                        dateModified = dateModified * 1000
+                        dateModified = dateModified * 1000,
+                        duration = duration
                     )
                 )
             }
