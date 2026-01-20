@@ -10,16 +10,34 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
-fun RequestMediaPermissions(onPermissionGranted: @Composable () -> Unit) {
+fun RequestMediaPermissions(
+    onPermissionGranted: @Composable () -> Unit,
+    onPermissionsJustGranted: () -> Unit = {}
+) {
+    // Estado para permitir continuar con acceso limitado
+    var continueWithLimitedAccess by remember { mutableStateOf(false) }
+
+    // En Android 14+ (UPSIDE_DOWN_CAKE), necesitamos manejar READ_MEDIA_VISUAL_USER_SELECTED
+    // para detectar si el usuario seleccionó acceso parcial vs completo
     val permissions = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> listOf(
+            android.Manifest.permission.READ_MEDIA_IMAGES,
+            android.Manifest.permission.READ_MEDIA_VIDEO,
+            android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        )
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> listOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
             android.Manifest.permission.READ_MEDIA_VIDEO
@@ -29,14 +47,74 @@ fun RequestMediaPermissions(onPermissionGranted: @Composable () -> Unit) {
 
     val permissionsState = rememberMultiplePermissionsState(permissions)
 
+    // Trackear si ya teníamos permisos antes de esta composición
+    var hadPermissionsBefore by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         permissionsState.launchMultiplePermissionRequest()
     }
 
+    // En Android 14+, verificar si tenemos acceso completo o parcial
+    val hasFullAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        // Acceso completo = READ_MEDIA_IMAGES o READ_MEDIA_VIDEO concedidos
+        // Acceso parcial = solo READ_MEDIA_VISUAL_USER_SELECTED concedido
+        permissionsState.permissions.any {
+            (it.permission == android.Manifest.permission.READ_MEDIA_IMAGES ||
+             it.permission == android.Manifest.permission.READ_MEDIA_VIDEO) &&
+            it.status.isGranted
+        }
+    } else {
+        permissionsState.allPermissionsGranted
+    }
+
+    val hasPartialAccess = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        !hasFullAccess && permissionsState.permissions.any {
+            it.permission == android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED &&
+            it.status.isGranted
+        }
+    } else {
+        false
+    }
+
+    val hasAnyAccess = hasFullAccess || hasPartialAccess
+
+    // Detectar cuando los permisos cambian de NO concedidos a concedidos
+    LaunchedEffect(hasAnyAccess) {
+        if (hasAnyAccess && !hadPermissionsBefore) {
+            // Los permisos acaban de ser otorgados, notificar para refrescar
+            onPermissionsJustGranted()
+            hadPermissionsBefore = true
+        }
+    }
+
     when {
-        permissionsState.allPermissionsGranted -> {
-            // Si todos los permisos son concedidos, ejecutamos la UI principal
+        hasFullAccess -> {
+            // Acceso completo a todos los medios
             onPermissionGranted()
+        }
+        hasPartialAccess && continueWithLimitedAccess -> {
+            // Usuario eligió continuar con acceso limitado
+            onPermissionGranted()
+        }
+        hasPartialAccess -> {
+            // Acceso parcial: el usuario solo seleccionó algunas fotos/videos
+            // Mostramos opciones para dar acceso completo o continuar
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Solo tienes acceso a algunas fotos y videos.")
+                Text("Para ver toda tu galería, otorga acceso completo.")
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { permissionsState.launchMultiplePermissionRequest() }) {
+                    Text("Dar acceso a todas las fotos")
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(onClick = { continueWithLimitedAccess = true }) {
+                    Text("Continuar con acceso limitado")
+                }
+            }
         }
         permissionsState.shouldShowRationale -> {
             // Si el usuario ha denegado el permiso anteriormente, mostrar un mensaje
@@ -45,16 +123,16 @@ fun RequestMediaPermissions(onPermissionGranted: @Composable () -> Unit) {
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text("We need access to your media files to show the gallery.")
+                Text("Necesitamos acceso a tus archivos multimedia para mostrar la galería.")
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(onClick = { permissionsState.launchMultiplePermissionRequest() }) {
-                    Text("Request Permission")
+                    Text("Solicitar Permiso")
                 }
             }
         }
         else -> {
             // Si los permisos no son concedidos ni se debe mostrar una justificación, mostrar mensaje
-            Text("Permissions are required to access media.")
+            Text("Se requieren permisos para acceder a los archivos multimedia.")
         }
     }
 }

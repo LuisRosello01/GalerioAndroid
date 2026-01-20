@@ -116,18 +116,19 @@ fun MainScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
     ) { paddingValues ->
-        RequestMediaPermissions {
-            Column(modifier = Modifier.padding(paddingValues)) {
-                // Indicador de progreso de sincronización
-                SyncProgressIndicator(
-                    progress = syncProgress,
-                    status = syncStatus,
-                    phase = batchSyncState.currentPhase,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+        RequestMediaPermissions(
+            onPermissionGranted = {
+                Column(modifier = Modifier.padding(paddingValues)) {
+                    // Indicador de progreso de sincronización
+                    SyncProgressIndicator(
+                        progress = syncProgress,
+                        status = syncStatus,
+                        phase = batchSyncState.currentPhase,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
 
-                // Card con resultado de sincronización
-                if (showSyncResult) {
+                    // Card con resultado de sincronización
+                    if (showSyncResult) {
                     SyncResultCard(
                         batchSyncState = batchSyncState,
                         onRetryClick = {
@@ -179,7 +180,12 @@ fun MainScreen(
                     }
                 }
             }
-        }
+            },
+            onPermissionsJustGranted = {
+                // Cuando los permisos son otorgados por primera vez, forzar refresh
+                mediaViewModel.refreshMedia()
+            }
+        )
     }
 }
 
