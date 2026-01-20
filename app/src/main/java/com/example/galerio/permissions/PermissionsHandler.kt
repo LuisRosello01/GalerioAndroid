@@ -143,3 +143,24 @@ fun RequestMediaPermissions(
         }
     }
 }
+
+/**
+ * Solicita el permiso de notificaciones en Android 13+ (Tiramisu)
+ * En versiones anteriores, las notificaciones están habilitadas por defecto.
+ */
+@OptIn(ExperimentalPermissionsApi::class)
+@Composable
+fun RequestNotificationPermission() {
+    // Solo necesitamos pedir permiso en Android 13+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val notificationPermissionState = rememberMultiplePermissionsState(
+            listOf(android.Manifest.permission.POST_NOTIFICATIONS)
+        )
+
+        LaunchedEffect(Unit) {
+            if (!notificationPermissionState.allPermissionsGranted) {
+                notificationPermissionState.launchMultiplePermissionRequest()
+            }
+        }
+    }
+}

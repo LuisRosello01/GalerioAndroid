@@ -20,6 +20,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.ImageLoader
+import com.example.galerio.permissions.RequestNotificationPermission
 import com.example.galerio.ui.MainScreen
 import com.example.galerio.ui.VideoPlayerScreen
 import com.example.galerio.ui.auth.LoginScreen
@@ -57,6 +58,9 @@ fun AppNavigation(imageLoader: ImageLoader) {
     val navController = rememberNavController()
     val authViewModel: AuthViewModel = hiltViewModel()
     val isAuthenticated by authViewModel.isAuthenticated.collectAsState()
+
+    // Solicitar permiso de notificaciones (Android 13+)
+    RequestNotificationPermission()
 
     // Determinar la pantalla inicial basándose en el estado de autenticación
     val startDestination = if (isAuthenticated) "media_list" else "login"
