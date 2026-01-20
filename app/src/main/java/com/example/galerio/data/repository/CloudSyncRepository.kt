@@ -3,6 +3,7 @@ package com.example.galerio.data.repository
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import android.webkit.MimeTypeMap
 import com.example.galerio.data.local.dao.MediaItemDao
 import com.example.galerio.data.local.dao.SyncedMediaDao
 import com.example.galerio.data.local.entity.SyncedMediaEntity
@@ -27,6 +28,7 @@ import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 import androidx.core.net.toUri
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * Repository para sincronización bidireccional con la nube
@@ -190,23 +192,33 @@ class CloudSyncRepository @Inject constructor(
 
     /**
      * Sube un archivo media a la nube
+     * @param mediaItem El MediaItem a subir
+     * @param file El archivo a subir
+     * @param hash Hash SHA-256 del archivo (opcional, se calcula si no se proporciona)
      */
-    suspend fun uploadMedia(mediaItem: MediaItem, file: File): Result<CloudMediaItem> = withContext(Dispatchers.IO) {
+    suspend fun uploadMedia(mediaItem: MediaItem, file: File, hash: String? = null): Result<CloudMediaItem> = withContext(Dispatchers.IO) {
         try {
             _syncStatus.value = SyncStatus.UPLOADING
 
             val token = authManager.getToken() ?: return@withContext Result.failure(Exception("No auth token"))
             val user = authManager.currentUser.first() ?: return@withContext Result.failure(Exception("No user found"))
 
-            // Crear el multipart body
-            val requestBody = file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+            // Calcular hash si no se proporcionó
+            val fileHash = hash ?: HashUtils.calculateFileHash(file)
+            Log.d(TAG, "File hash: $fileHash")
+
+            // Crear el multipart body con el MIME type correcto
+            val mimeType = getMimeTypeFromFile(file, mediaItem.type.name.lowercase())
+            Log.d(TAG, "Uploading file ${file.name} with MIME type: $mimeType")
+            val requestBody = file.asRequestBody(mimeType.toMediaTypeOrNull())
             val filePart = MultipartBody.Part.createFormData("file", file.name, requestBody)
 
-            // Metadata en JSON (ajustar según tu API)
-            val metadata = okhttp3.RequestBody.create(
-                "application/json".toMediaTypeOrNull(),
-                """{"type":"${mediaItem.type.name.lowercase()}","dateModified":${mediaItem.dateModified}}"""
-            )
+            // Metadata en JSON con hash incluido
+            val metadata =
+                """{"type":"${mediaItem.type.name.lowercase()}","dateModified":${mediaItem.dateModified},"hash":"$fileHash"}"""
+                    .toRequestBody(
+                        "application/json".toMediaTypeOrNull()
+                    )
 
             val response = apiService.uploadMedia("Bearer $token", user.id, filePart, metadata)
 
@@ -525,12 +537,13 @@ class CloudSyncRepository @Inject constructor(
             ?: return UploadResult.Skipped("Media item not found for URI")
 
         val uri = try {
-            Uri.parse(uriString)
+            uriString.toUri()
         } catch (e: Exception) {
             return UploadResult.Skipped("Invalid URI format")
         }
 
         var lastError: String = "Unknown error"
+        val existingHash = hashesMap[uriString]
 
         repeat(maxRetries) { attempt ->
             val tempFile = createTempFileFromUri(uri, mediaItem.type.name.lowercase())
@@ -544,7 +557,8 @@ class CloudSyncRepository @Inject constructor(
             try {
                 Log.d(TAG, "[UPLOAD] Attempt ${attempt + 1}/$maxRetries for: $uriString")
 
-                val result = uploadMedia(mediaItem, tempFile)
+                // Pasar el hash existente para evitar recalcularlo
+                val result = uploadMedia(mediaItem, tempFile, existingHash)
 
                 if (result.isSuccess) {
                     val cloudItem = result.getOrNull()
@@ -700,5 +714,28 @@ class CloudSyncRepository @Inject constructor(
      */
     suspend fun getSyncedMediaCount(): Int {
         return syncedMediaDao.getCount()
+    }
+
+    /**
+     * Determina el tipo MIME correcto del archivo.
+     * Intenta obtenerlo de la extensión del archivo,
+     * y si no es posible, usa un tipo predeterminado basado en el tipo de media.
+     */
+    private fun getMimeTypeFromFile(file: File, mediaType: String): String {
+        // 1. Intentar obtener de la extensión del archivo
+        val extension = file.extension.lowercase()
+        if (extension.isNotBlank()) {
+            val mimeFromExtension = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+            if (!mimeFromExtension.isNullOrBlank()) {
+                return mimeFromExtension
+            }
+        }
+
+        // 2. Usar tipo predeterminado basado en el tipo de media
+        return when (mediaType) {
+            "image" -> "image/jpeg"
+            "video" -> "video/mp4"
+            else -> "application/octet-stream"
+        }
     }
 }

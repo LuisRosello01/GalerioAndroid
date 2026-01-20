@@ -1,15 +1,20 @@
 package com.example.galerio.viewmodel
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.galerio.data.local.preferences.SyncSettingsManager
 import com.example.galerio.data.model.MediaItem
 import com.example.galerio.data.model.cloud.SyncStatus
 import com.example.galerio.data.repository.CloudSyncRepository
+import com.example.galerio.worker.SyncWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -45,7 +50,9 @@ enum class SyncPhase {
  */
 @HiltViewModel
 class SyncViewModel @Inject constructor(
-    private val syncRepository: CloudSyncRepository
+    @ApplicationContext private val context: Context,
+    private val syncRepository: CloudSyncRepository,
+    private val syncSettingsManager: SyncSettingsManager
 ) : ViewModel() {
 
     companion object {
@@ -69,6 +76,10 @@ class SyncViewModel @Inject constructor(
 
     private val _successMessage = MutableStateFlow<String?>(null)
     val successMessage: StateFlow<String?> = _successMessage.asStateFlow()
+
+    // Configuración de sincronización
+    private val _syncSettings = MutableStateFlow(SyncSettingsManager.SyncSettings())
+    val syncSettings: StateFlow<SyncSettingsManager.SyncSettings> = _syncSettings.asStateFlow()
 
     // Lista de items pendientes de subir (para reintento manual)
     private var pendingUploadItems: List<MediaItem> = emptyList()
@@ -113,9 +124,35 @@ class SyncViewModel @Inject constructor(
             }
         }
 
+        // Observar configuración de sincronización
+        viewModelScope.launch {
+            syncSettingsManager.syncSettings.collect { settings ->
+                _syncSettings.value = settings
+                // Actualizar la programación de sincronización cuando cambie la configuración
+                updateBackgroundSyncSchedule(settings)
+            }
+        }
+
         // Cargar el conteo de archivos sincronizados al iniciar
         viewModelScope.launch {
             loadSyncedCount()
+        }
+    }
+
+    /**
+     * Actualiza la programación de sincronización en background
+     */
+    private fun updateBackgroundSyncSchedule(settings: SyncSettingsManager.SyncSettings) {
+        if (settings.autoSyncEnabled) {
+            SyncWorker.schedulePeriodicSync(
+                context = context,
+                intervalHours = settings.syncIntervalHours,
+                autoUpload = settings.autoUpload
+            )
+            Log.d(TAG, "Background sync scheduled every ${settings.syncIntervalHours} hours")
+        } else {
+            SyncWorker.cancelScheduledSync(context)
+            Log.d(TAG, "Background sync cancelled")
         }
     }
 
@@ -312,5 +349,60 @@ class SyncViewModel @Inject constructor(
         _batchSyncState.value = BatchSyncState()
         _error.value = null
         _successMessage.value = null
+    }
+
+    // ============ CONFIGURACIÓN DE SINCRONIZACIÓN ============
+
+    /**
+     * Habilita o deshabilita la sincronización automática
+     */
+    fun setAutoSyncEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            syncSettingsManager.setAutoSyncEnabled(enabled)
+        }
+    }
+
+    /**
+     * Configura si solo sincronizar con WiFi
+     */
+    fun setWifiOnly(wifiOnly: Boolean) {
+        viewModelScope.launch {
+            syncSettingsManager.setWifiOnly(wifiOnly)
+        }
+    }
+
+    /**
+     * Configura si subir automáticamente los archivos nuevos
+     */
+    fun setAutoUpload(autoUpload: Boolean) {
+        viewModelScope.launch {
+            syncSettingsManager.setAutoUpload(autoUpload)
+        }
+    }
+
+    /**
+     * Configura el intervalo de sincronización en horas
+     */
+    fun setSyncIntervalHours(hours: Long) {
+        viewModelScope.launch {
+            syncSettingsManager.setSyncIntervalHours(hours)
+        }
+    }
+
+    /**
+     * Actualiza el tiempo de última sincronización
+     */
+    fun updateLastSyncTime() {
+        viewModelScope.launch {
+            syncSettingsManager.updateLastSyncTime()
+        }
+    }
+
+    /**
+     * Ejecuta una sincronización inmediata en background
+     */
+    fun syncNowInBackground(autoUpload: Boolean = false) {
+        SyncWorker.syncNow(context, autoUpload)
+        Log.d(TAG, "Triggered immediate background sync")
     }
 }

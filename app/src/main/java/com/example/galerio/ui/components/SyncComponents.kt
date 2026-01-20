@@ -535,3 +535,226 @@ fun SyncResultCard(
         }
     }
 }
+
+/**
+ * Diálogo de configuración de sincronización
+ */
+@Composable
+fun SyncSettingsDialog(
+    isAutoSyncEnabled: Boolean,
+    isWifiOnly: Boolean,
+    isAutoUpload: Boolean,
+    syncIntervalHours: Long,
+    onAutoSyncChanged: (Boolean) -> Unit,
+    onWifiOnlyChanged: (Boolean) -> Unit,
+    onAutoUploadChanged: (Boolean) -> Unit,
+    onIntervalChanged: (Long) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Configuración de sincronización") },
+        text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Auto-sync toggle
+                SyncSettingSwitch(
+                    title = "Sincronización automática",
+                    description = "Sincronizar automáticamente en segundo plano",
+                    checked = isAutoSyncEnabled,
+                    onCheckedChange = onAutoSyncChanged
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                // WiFi only toggle
+                SyncSettingSwitch(
+                    title = "Solo con WiFi",
+                    description = "Sincronizar solo cuando esté conectado a WiFi",
+                    checked = isWifiOnly,
+                    onCheckedChange = onWifiOnlyChanged,
+                    enabled = isAutoSyncEnabled
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                // Auto-upload toggle
+                SyncSettingSwitch(
+                    title = "Subida automática",
+                    description = "Subir nuevos archivos automáticamente",
+                    checked = isAutoUpload,
+                    onCheckedChange = onAutoUploadChanged,
+                    enabled = isAutoSyncEnabled
+                )
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                // Sync interval selector
+                Text(
+                    text = "Intervalo de sincronización",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (isAutoSyncEnabled) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                SyncIntervalSelector(
+                    selectedHours = syncIntervalHours,
+                    onIntervalSelected = onIntervalChanged,
+                    enabled = isAutoSyncEnabled
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Aceptar")
+            }
+        },
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun SyncSettingSwitch(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                }
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                }
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
+        )
+    }
+}
+
+@Composable
+private fun SyncIntervalSelector(
+    selectedHours: Long,
+    onIntervalSelected: (Long) -> Unit,
+    enabled: Boolean = true
+) {
+    val intervals = listOf(
+        1L to "1 hora",
+        3L to "3 horas",
+        6L to "6 horas",
+        12L to "12 horas",
+        24L to "24 horas"
+    )
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        intervals.forEach { (hours, label) ->
+            FilterChip(
+                selected = selectedHours == hours,
+                onClick = { onIntervalSelected(hours) },
+                label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                enabled = enabled
+            )
+        }
+    }
+}
+
+/**
+ * Indicador compacto de estado de sincronización para la barra superior
+ */
+@Composable
+fun SyncStatusBadge(
+    pendingCount: Int,
+    isSyncing: Boolean,
+    lastSyncTime: Long,
+    modifier: Modifier = Modifier
+) {
+    val timeSinceSync = if (lastSyncTime > 0) {
+        val diff = System.currentTimeMillis() - lastSyncTime
+        when {
+            diff < 60_000 -> "Hace un momento"
+            diff < 3600_000 -> "Hace ${diff / 60_000} min"
+            diff < 86400_000 -> "Hace ${diff / 3600_000} h"
+            else -> "Hace ${diff / 86400_000} días"
+        }
+    } else {
+        "Nunca"
+    }
+
+    Row(
+        modifier = modifier
+            .background(
+                color = when {
+                    isSyncing -> MaterialTheme.colorScheme.primaryContainer
+                    pendingCount > 0 -> MaterialTheme.colorScheme.tertiaryContainer
+                    else -> MaterialTheme.colorScheme.surfaceVariant
+                },
+                shape = RoundedCornerShape(16.dp)
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (isSyncing) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp
+            )
+            Text(
+                text = "Sincronizando...",
+                style = MaterialTheme.typography.labelSmall
+            )
+        } else if (pendingCount > 0) {
+            Icon(
+                imageVector = Icons.Default.CloudUpload,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Text(
+                text = "$pendingCount pendientes",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = timeSinceSync,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+

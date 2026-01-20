@@ -3,6 +3,7 @@ package com.example.galerio.viewmodel
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.galerio.data.local.dao.SyncedMediaDao
 import com.example.galerio.data.model.MediaItem
 import com.example.galerio.data.repository.MediaRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -21,11 +23,16 @@ import javax.inject.Inject
 
 @HiltViewModel
 class MediaViewModel @Inject constructor(
-    private val repository: MediaRepository
+    private val repository: MediaRepository,
+    private val syncedMediaDao: SyncedMediaDao
 ) : ViewModel() {
 
     private val _mediaItems = MutableStateFlow<List<MediaItem>>(emptyList())
     val mediaItems: StateFlow<List<MediaItem>> = _mediaItems.asStateFlow()
+
+    // Set de URIs sincronizados (para verificar rápidamente si un item está sincronizado)
+    private val _syncedUris = MutableStateFlow<Set<String>>(emptySet())
+    val syncedUris: StateFlow<Set<String>> = _syncedUris.asStateFlow()
 
     // Lógica de agrupación movida al ViewModel para optimizar la UI
     val groupedMediaItems: StateFlow<Map<String, List<MediaItem>>> = _mediaItems
@@ -52,6 +59,8 @@ class MediaViewModel @Inject constructor(
 
     init {
         loadMedia()
+        loadSyncedUris()
+        observeSyncedMedia()
     }
 
     private fun loadMedia() {
@@ -63,6 +72,8 @@ class MediaViewModel @Inject constructor(
                 .onSuccess { items ->
                     _mediaItems.value = items
                     Log.d("MediaViewModel", "Loaded ${items.size} media items")
+                    // Actualizar URIs sincronizados
+                    loadSyncedUris()
                 }
                 .onFailure { exception ->
                     Log.e("MediaViewModel", "Error loading media", exception)
@@ -72,6 +83,34 @@ class MediaViewModel @Inject constructor(
 
             _isLoading.value = false
         }
+    }
+
+    private fun loadSyncedUris() {
+        viewModelScope.launch {
+            try {
+                val syncedItems = syncedMediaDao.getAllSyncedList()
+                _syncedUris.value = syncedItems.map { it.localUri }.toSet()
+                Log.d("MediaViewModel", "Loaded ${syncedItems.size} synced URIs")
+            } catch (e: Exception) {
+                Log.e("MediaViewModel", "Error loading synced URIs", e)
+            }
+        }
+    }
+
+    private fun observeSyncedMedia() {
+        viewModelScope.launch {
+            syncedMediaDao.getAllSynced().collect { syncedItems ->
+                _syncedUris.value = syncedItems.map { it.localUri }.toSet()
+                Log.d("MediaViewModel", "Updated synced URIs: ${syncedItems.size} items")
+            }
+        }
+    }
+
+    /**
+     * Verifica si un item está sincronizado
+     */
+    fun isItemSynced(uri: String): Boolean {
+        return _syncedUris.value.contains(uri)
     }
 
     fun refreshMedia() {
@@ -84,6 +123,8 @@ class MediaViewModel @Inject constructor(
                 .onSuccess { items ->
                     _mediaItems.value = items
                     Log.d("MediaViewModel", "Refresh complete: ${items.size} items")
+                    // Actualizar URIs sincronizados
+                    loadSyncedUris()
                 }
                 .onFailure { exception ->
                     Log.e("MediaViewModel", "Error refreshing media", exception)
@@ -92,6 +133,13 @@ class MediaViewModel @Inject constructor(
 
             _isLoading.value = false
         }
+    }
+
+    /**
+     * Fuerza la recarga de los estados de sincronización
+     */
+    fun refreshSyncStatus() {
+        loadSyncedUris()
     }
 
     fun clearError() {

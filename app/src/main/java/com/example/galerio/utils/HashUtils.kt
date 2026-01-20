@@ -4,6 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.security.MessageDigest
 
 /**
@@ -61,6 +62,28 @@ object HashUtils {
                 null
             }
         }
+
+    /**
+     * Calcula el hash SHA-256 de un archivo File
+     * @param file Archivo a procesar
+     * @return Hash SHA-256 en formato hexadecimal, o null si hay error
+     */
+    suspend fun calculateFileHash(file: File): String? = withContext(Dispatchers.IO) {
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { inputStream ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            digest.digest().toHexString()
+        } catch (e: Exception) {
+            android.util.Log.e("HashUtils", "Error calculating SHA-256 for file ${file.name}", e)
+            null
+        }
+    }
 
     /**
      * Calcula hashes para múltiples URIs

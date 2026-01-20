@@ -22,10 +22,12 @@ import com.example.galerio.permissions.RequestMediaPermissions
 import com.example.galerio.ui.components.PendingUploadsBanner
 import com.example.galerio.ui.components.SyncProgressIndicator
 import com.example.galerio.ui.components.SyncResultCard
+import com.example.galerio.ui.components.SyncSettingsDialog
 import com.example.galerio.viewmodel.AuthViewModel
 import com.example.galerio.viewmodel.MediaViewModel
 import com.example.galerio.viewmodel.SyncPhase
 import com.example.galerio.viewmodel.SyncViewModel
+import androidx.core.net.toUri
 
 // Función para mostrar la pantalla principal
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,6 +44,7 @@ fun MainScreen(
     var isVideoSelected by remember { mutableStateOf(false) } // Estado para saber si se seleccionó un video
     var showSyncResult by remember { mutableStateOf(true) } // Controlar visibilidad del resultado
     var showPendingBanner by remember { mutableStateOf(true) } // Controlar visibilidad del banner de pendientes
+    var showSyncSettings by remember { mutableStateOf(false) } // Diálogo de configuración de sincronización
 
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior() // Manejo de desplazamiento para la barra de aplicación
 
@@ -54,6 +57,7 @@ fun MainScreen(
     val batchSyncState by syncViewModel.batchSyncState.collectAsState()
     val syncError by syncViewModel.error.collectAsState()
     val successMessage by syncViewModel.successMessage.collectAsState()
+    val syncSettings by syncViewModel.syncSettings.collectAsState()
 
     // Lista de medios para sincronización
     val mediaItems by mediaViewModel.mediaItems.collectAsState()
@@ -110,6 +114,7 @@ fun MainScreen(
                     val localItems = mediaItems.filter { !it.isCloudItem }
                     syncViewModel.startBatchSyncWithAutoUpload(localItems)
                 },
+                onSyncSettingsClick = { showSyncSettings = true },
                 onLogoutClick = { authViewModel.logout() }
             )
         },
@@ -167,16 +172,16 @@ fun MainScreen(
             selectedMediaUri?.let { uri ->
                 Box(modifier = Modifier.zIndex(1f)) {
                     if (isVideoSelected) {
-                        VideoPlayerScreen(videoUri = Uri.parse(uri)) {
-                            selectedMediaUri = null // Cerrar el video y volver a la lista
-                        }
+                        VideoPlayerScreen(
+                            videoUri = uri.toUri(),
+                            onBackPress = { selectedMediaUri = null }
+                        )
                     } else {
                         FullScreenImage(
                             imageUri = uri,
-                            imageLoader = imageLoader
-                        ) {
-                            selectedMediaUri = null // Cerrar la imagen y volver a la lista
-                        }
+                            imageLoader = imageLoader,
+                            onDismiss = { selectedMediaUri = null }
+                        )
                     }
                 }
             }
@@ -185,6 +190,21 @@ fun MainScreen(
                 // Cuando los permisos son otorgados por primera vez, forzar refresh
                 mediaViewModel.refreshMedia()
             }
+        )
+    }
+
+    // Diálogo de configuración de sincronización
+    if (showSyncSettings) {
+        SyncSettingsDialog(
+            isAutoSyncEnabled = syncSettings.autoSyncEnabled,
+            isWifiOnly = syncSettings.wifiOnly,
+            isAutoUpload = syncSettings.autoUpload,
+            syncIntervalHours = syncSettings.syncIntervalHours,
+            onAutoSyncChanged = { syncViewModel.setAutoSyncEnabled(it) },
+            onWifiOnlyChanged = { syncViewModel.setWifiOnly(it) },
+            onAutoUploadChanged = { syncViewModel.setAutoUpload(it) },
+            onIntervalChanged = { syncViewModel.setSyncIntervalHours(it) },
+            onDismiss = { showSyncSettings = false }
         )
     }
 }
@@ -198,6 +218,7 @@ fun MyAppBar(
     hasPendingUploads: Boolean = false,
     onSyncClick: () -> Unit = {},
     onSyncWithUploadClick: () -> Unit = {},
+    onSyncSettingsClick: () -> Unit = {},
     onLogoutClick: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -259,6 +280,17 @@ fun MyAppBar(
                             showMenu = false
                         },
                         enabled = !isSyncing
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Configuración de sincronización") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.CloudSync, contentDescription = null)
+                        },
+                        onClick = {
+                            onSyncSettingsClick()
+                            showMenu = false
+                        }
                     )
                     HorizontalDivider()
                     DropdownMenuItem(

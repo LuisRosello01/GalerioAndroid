@@ -31,7 +31,6 @@ import com.example.galerio.data.model.MediaType
 import com.example.galerio.ui.components.ImageCard
 import com.example.galerio.ui.components.VideoCard
 import com.example.galerio.viewmodel.MediaViewModel
-// Imports removed
 
 
 // Función para mostrar la lista de imágenes en una cuadrícula
@@ -46,6 +45,7 @@ fun MediaList(
     val mediaItems by viewModel.mediaItems.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val error by viewModel.error.collectAsState()
+    val syncedUris by viewModel.syncedUris.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val pullToRefreshState = rememberPullToRefreshState()
@@ -109,19 +109,24 @@ fun MediaList(
                                 mediaForDate.sortedByDescending { it.dateModified },
                                 key = { it.uri }
                             ) { mediaItem ->
+                                // Verificar si el item está sincronizado
+                                val isSynced = syncedUris.contains(mediaItem.uri)
+
                                 when (mediaItem.type) {
                                     MediaType.Image -> ImageCard(
                                         mediaItem = mediaItem,
                                         context = context,
                                         imageLoader = imageLoader,
-                                        onClick = { onMediaClick(mediaItem.uri, mediaItem.type) }
+                                        onClick = { onMediaClick(mediaItem.uri, mediaItem.type) },
+                                        isSynced = isSynced
                                     )
 
                                     MediaType.Video -> VideoCard(
                                         mediaItem = mediaItem,
                                         context = context,
                                         imageLoader = imageLoader,
-                                        onClick = { onMediaClick(mediaItem.uri, mediaItem.type) }
+                                        onClick = { onMediaClick(mediaItem.uri, mediaItem.type) },
+                                        isSynced = isSynced
                                     )
                                 }
                             }

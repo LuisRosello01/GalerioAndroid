@@ -100,7 +100,7 @@ dependencies {
     // WorkManager para sincronización en background
     implementation(libs.work.runtime)
     implementation(libs.hilt.work)
-    ksp(libs.hilt.work)
+    ksp(libs.hilt.work.compiler)
 
     // DataStore para guardar credenciales de forma segura
     implementation(libs.datastore.preferences)
