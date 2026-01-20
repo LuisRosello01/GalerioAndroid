@@ -7,6 +7,7 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.example.galerio.data.local.AppDatabase
 import com.example.galerio.data.local.dao.MediaItemDao
+import com.example.galerio.data.local.dao.SyncedMediaDao
 import com.example.galerio.data.local.preferences.AuthManager
 import com.example.galerio.data.remote.adapter.DateTimeAdapter
 import com.example.galerio.data.remote.api.CloudApiService
@@ -51,6 +52,7 @@ object AppModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
+            .addMigrations(AppDatabase.MIGRATION_1_2)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -59,6 +61,12 @@ object AppModule {
     @Singleton
     fun provideMediaItemDao(database: AppDatabase): MediaItemDao {
         return database.mediaItemDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideSyncedMediaDao(database: AppDatabase): SyncedMediaDao {
+        return database.syncedMediaDao()
     }
 
     @Provides
@@ -187,9 +195,10 @@ object AppModule {
         @ApplicationContext context: Context,
         apiService: CloudApiService,
         authManager: AuthManager,
-        mediaItemDao: MediaItemDao
+        mediaItemDao: MediaItemDao,
+        syncedMediaDao: SyncedMediaDao
     ): CloudSyncRepository {
-        return CloudSyncRepository(context, apiService, authManager, mediaItemDao)
+        return CloudSyncRepository(context, apiService, authManager, mediaItemDao, syncedMediaDao)
     }
 
     @Provides

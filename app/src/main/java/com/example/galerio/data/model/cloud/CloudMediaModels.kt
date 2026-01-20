@@ -124,7 +124,9 @@ enum class SyncStatus {
  * {
  *   "items": [...],
  *   "total_count": 2,
- *   "filters": {...}
+ *   "filters": {...},
+ *   "needs_upload": ["uri1", "uri2"],
+ *   "already_synced": {"uri1": "cloudId1"}
  * }
  */
 data class CloudMediaListResponse(
@@ -135,7 +137,13 @@ data class CloudMediaListResponse(
     val totalCount: Int = 0,
 
     @SerializedName("filters")
-    val filters: MediaFilters? = null
+    val filters: MediaFilters? = null,
+
+    @SerializedName("needs_upload")
+    val needsUpload: List<String>? = null,
+
+    @SerializedName("already_synced")
+    val alreadySynced: Map<String, String>? = null
 )
 
 /**
@@ -149,5 +157,15 @@ data class MediaFilters(
     val includeDeleted: Boolean? = null,
 
     @SerializedName("sort_by")
-    val sortBy: String? = null
+    val sortBy: String? = null,
+
+    // Campos para respuesta de sync batch
+    @SerializedName("sync_requested")
+    val syncRequested: Int? = null,
+
+    @SerializedName("sync_matched")
+    val syncMatched: Int? = null,
+
+    @SerializedName("sync_pending")
+    val syncPending: Int? = null
 )

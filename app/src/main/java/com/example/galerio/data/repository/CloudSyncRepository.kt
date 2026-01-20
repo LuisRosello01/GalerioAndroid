@@ -1,13 +1,17 @@
 package com.example.galerio.data.repository
 
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import com.example.galerio.data.local.dao.MediaItemDao
+import com.example.galerio.data.local.dao.SyncedMediaDao
+import com.example.galerio.data.local.entity.SyncedMediaEntity
 import com.example.galerio.data.local.preferences.AuthManager
 import com.example.galerio.data.model.MediaItem
 import com.example.galerio.data.model.cloud.CloudMediaItem
 import com.example.galerio.data.model.cloud.SyncStatus
 import com.example.galerio.data.remote.api.CloudApiService
+import com.example.galerio.utils.HashUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,7 +35,8 @@ class CloudSyncRepository @Inject constructor(
     private val context: Context,
     private val apiService: CloudApiService,
     private val authManager: AuthManager,
-    private val mediaItemDao: MediaItemDao
+    private val mediaItemDao: MediaItemDao,
+    private val syncedMediaDao: SyncedMediaDao
 ) {
 
     companion object {
@@ -313,5 +318,274 @@ class CloudSyncRepository @Inject constructor(
             Log.e(TAG, "Delete error", e)
             Result.failure(e)
         }
+    }
+
+    // ============ SINCRONIZACIÓN BATCH ============
+
+    /**
+     * Resultado de la sincronización batch
+     */
+    data class BatchSyncResult(
+        val alreadySynced: Map<String, String>, // uri -> cloudId
+        val needsUpload: List<String>,          // uris que necesitan subirse
+        val uploadedCount: Int = 0,
+        val failedCount: Int = 0
+    )
+
+    /**
+     * Sincroniza archivos locales con la nube usando hashes
+     * @param localMediaItems Lista de MediaItems locales a sincronizar
+     * @param autoUpload Si es true, sube automáticamente los archivos pendientes
+     * @return BatchSyncResult con el resultado de la sincronización
+     */
+    suspend fun syncBatch(
+        localMediaItems: List<MediaItem>,
+        autoUpload: Boolean = false
+    ): Result<BatchSyncResult> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "[BATCH_SYNC] Starting batch sync for ${localMediaItems.size} items")
+
+            // Verificar autenticación
+            if (!authManager.isAuthenticated()) {
+                Log.d(TAG, "[BATCH_SYNC] User not authenticated")
+                return@withContext Result.failure(Exception("User not authenticated"))
+            }
+
+            val token = authManager.getToken() ?: return@withContext Result.failure(Exception("No auth token"))
+
+            _syncStatus.value = SyncStatus.PENDING
+
+            // 1. Calcular hashes de los archivos locales
+            Log.d(TAG, "[BATCH_SYNC] Step 1: Calculating hashes...")
+            val contentResolver = context.contentResolver
+            val uris = localMediaItems.mapNotNull {
+                try {
+                    Uri.parse(it.uri)
+                } catch (e: Exception) {
+                    Log.w(TAG, "[BATCH_SYNC] Invalid URI: ${it.uri}")
+                    null
+                }
+            }
+
+            val hashesMap = HashUtils.calculateHashesForUris(
+                contentResolver = contentResolver,
+                uris = uris,
+                onProgress = { progress ->
+                    _syncProgress.value = progress * 0.3f // 0-30% para cálculo de hashes
+                }
+            )
+            Log.d(TAG, "[BATCH_SYNC] Calculated ${hashesMap.size} hashes")
+
+            if (hashesMap.isEmpty()) {
+                Log.d(TAG, "[BATCH_SYNC] No valid hashes calculated")
+                return@withContext Result.success(BatchSyncResult(emptyMap(), emptyList()))
+            }
+
+            // 2. Enviar hashes al servidor
+            Log.d(TAG, "[BATCH_SYNC] Step 2: Sending hashes to server...")
+            val response = apiService.syncMedia("Bearer $token", hashesMap)
+
+            if (!response.isSuccessful) {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "[BATCH_SYNC] Server error: ${response.code()} - $errorBody")
+
+                // Si es 401, manejar logout
+                if (response.code() == 401 && errorBody?.contains("NO_REFRESH_TOKEN") == true) {
+                    authManager.logout()
+                    return@withContext Result.failure(Exception("Session expired. Please login again."))
+                }
+
+                _syncStatus.value = SyncStatus.ERROR
+                return@withContext Result.failure(Exception("Sync failed: ${response.message()}"))
+            }
+
+            val syncResponse = response.body()
+            val alreadySynced = syncResponse?.alreadySynced ?: emptyMap()
+            val needsUpload = syncResponse?.needsUpload ?: emptyList()
+
+            Log.d(TAG, "[BATCH_SYNC] Server response - already_synced: ${alreadySynced.size}, needs_upload: ${needsUpload.size}")
+
+            if (syncResponse?.filters != null) {
+                Log.d(TAG, "[BATCH_SYNC] Filters: requested=${syncResponse.filters.syncRequested}, matched=${syncResponse.filters.syncMatched}, pending=${syncResponse.filters.syncPending}")
+            }
+
+            // 3. Guardar already_synced en Room
+            Log.d(TAG, "[BATCH_SYNC] Step 3: Saving synced items to local database...")
+            saveSyncedItems(alreadySynced, hashesMap)
+
+            _syncProgress.value = 0.5f // 50% completado
+
+            // 4. Subir archivos pendientes si autoUpload está habilitado
+            var uploadedCount = 0
+            var failedCount = 0
+
+            if (autoUpload && needsUpload.isNotEmpty()) {
+                Log.d(TAG, "[BATCH_SYNC] Step 4: Auto-uploading ${needsUpload.size} pending files...")
+                val uploadResult = uploadPendingMedia(needsUpload, localMediaItems, hashesMap)
+                uploadedCount = uploadResult.first
+                failedCount = uploadResult.second
+            }
+
+            _syncStatus.value = SyncStatus.SYNCED
+            _syncProgress.value = 1f
+
+            Log.d(TAG, "[BATCH_SYNC] Sync completed - synced: ${alreadySynced.size}, uploaded: $uploadedCount, failed: $failedCount")
+
+            Result.success(BatchSyncResult(
+                alreadySynced = alreadySynced,
+                needsUpload = needsUpload,
+                uploadedCount = uploadedCount,
+                failedCount = failedCount
+            ))
+
+        } catch (e: Exception) {
+            Log.e(TAG, "[BATCH_SYNC] Error during batch sync", e)
+            _syncStatus.value = SyncStatus.ERROR
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Sube los archivos pendientes a la nube
+     * @return Par (uploadedCount, failedCount)
+     */
+    private suspend fun uploadPendingMedia(
+        needsUpload: List<String>,
+        localMediaItems: List<MediaItem>,
+        hashesMap: Map<String, String>
+    ): Pair<Int, Int> {
+        var uploadedCount = 0
+        var failedCount = 0
+        val totalToUpload = needsUpload.size
+
+        _syncStatus.value = SyncStatus.UPLOADING
+
+        needsUpload.forEachIndexed { index, uriString ->
+            try {
+                val mediaItem = localMediaItems.find { it.uri == uriString }
+                if (mediaItem == null) {
+                    Log.w(TAG, "[UPLOAD] Media item not found for URI: $uriString")
+                    failedCount++
+                    return@forEachIndexed
+                }
+
+                // Crear archivo temporal desde ContentResolver
+                val uri = Uri.parse(uriString)
+                val tempFile = createTempFileFromUri(uri, mediaItem.type.name.lowercase())
+
+                if (tempFile == null) {
+                    Log.w(TAG, "[UPLOAD] Could not create temp file for: $uriString")
+                    failedCount++
+                    return@forEachIndexed
+                }
+
+                try {
+                    val result = uploadMedia(mediaItem, tempFile)
+                    if (result.isSuccess) {
+                        val cloudItem = result.getOrNull()
+                        if (cloudItem != null) {
+                            // Guardar en Room el nuevo mapping
+                            val hash = hashesMap[uriString] ?: ""
+                            syncedMediaDao.insert(SyncedMediaEntity(
+                                localUri = uriString,
+                                cloudId = cloudItem.id,
+                                hash = hash,
+                                syncedAt = System.currentTimeMillis()
+                            ))
+                            uploadedCount++
+                        }
+                    } else {
+                        Log.e(TAG, "[UPLOAD] Failed to upload: $uriString", result.exceptionOrNull())
+                        failedCount++
+                    }
+                } finally {
+                    // Limpiar archivo temporal
+                    tempFile.delete()
+                }
+
+                // Actualizar progreso (50-100% para uploads)
+                val uploadProgress = (index + 1).toFloat() / totalToUpload
+                _syncProgress.value = 0.5f + (uploadProgress * 0.5f)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "[UPLOAD] Error uploading $uriString", e)
+                failedCount++
+            }
+        }
+
+        return Pair(uploadedCount, failedCount)
+    }
+
+    /**
+     * Guarda los items ya sincronizados en Room
+     */
+    private suspend fun saveSyncedItems(
+        alreadySynced: Map<String, String>,
+        hashesMap: Map<String, String>
+    ) {
+        val syncedEntities = alreadySynced.mapNotNull { (uri, cloudId) ->
+            val hash = hashesMap[uri]
+            if (hash != null) {
+                SyncedMediaEntity(
+                    localUri = uri,
+                    cloudId = cloudId,
+                    hash = hash,
+                    syncedAt = System.currentTimeMillis()
+                )
+            } else {
+                null
+            }
+        }
+
+        if (syncedEntities.isNotEmpty()) {
+            syncedMediaDao.insertAll(syncedEntities)
+            Log.d(TAG, "[BATCH_SYNC] Saved ${syncedEntities.size} synced items to database")
+        }
+    }
+
+    /**
+     * Crea un archivo temporal desde un URI de contenido
+     */
+    private fun createTempFileFromUri(uri: Uri, prefix: String): File? {
+        return try {
+            val inputStream = context.contentResolver.openInputStream(uri) ?: return null
+            val tempFile = File.createTempFile(prefix, null, context.cacheDir)
+            tempFile.outputStream().use { outputStream ->
+                inputStream.copyTo(outputStream)
+            }
+            inputStream.close()
+            tempFile
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating temp file from URI: $uri", e)
+            null
+        }
+    }
+
+    /**
+     * Verifica si un archivo local ya está sincronizado
+     */
+    suspend fun isMediaSynced(uri: String): Boolean {
+        return syncedMediaDao.isSynced(uri)
+    }
+
+    /**
+     * Obtiene el cloudId de un archivo local sincronizado
+     */
+    suspend fun getCloudIdForLocalUri(uri: String): String? {
+        return syncedMediaDao.getCloudIdForUri(uri)
+    }
+
+    /**
+     * Obtiene todos los archivos sincronizados
+     */
+    fun getAllSyncedMedia(): Flow<List<SyncedMediaEntity>> {
+        return syncedMediaDao.getAllSynced()
+    }
+
+    /**
+     * Obtiene el conteo de archivos sincronizados
+     */
+    suspend fun getSyncedMediaCount(): Int {
+        return syncedMediaDao.getCount()
     }
 }
