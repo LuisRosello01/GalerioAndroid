@@ -67,9 +67,6 @@ open class MediaRepository(
             val filteredCloudMedia = cloudMedia.filter { cloudItem ->
                 val cloudId = cloudItem.cloudId
                 val isAlreadySyncedLocally = cloudId != null && syncedCloudIds.contains(cloudId)
-                if (isAlreadySyncedLocally) {
-                    Log.d(TAG, "Filtering out cloud item (already synced locally): $cloudId")
-                }
                 !isAlreadySyncedLocally
             }
 

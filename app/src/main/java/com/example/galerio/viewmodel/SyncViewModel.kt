@@ -8,6 +8,7 @@ import com.example.galerio.data.local.preferences.SyncSettingsManager
 import com.example.galerio.data.model.MediaItem
 import com.example.galerio.data.model.cloud.SyncStatus
 import com.example.galerio.data.repository.CloudSyncRepository
+import com.example.galerio.notification.SyncNotificationHelper
 import com.example.galerio.worker.SyncWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -42,6 +43,7 @@ enum class SyncPhase {
     CHECKING_SERVER,
     UPLOADING,
     COMPLETED,
+    CANCELLED,
     ERROR
 }
 
@@ -120,6 +122,21 @@ class SyncViewModel @Inject constructor(
                         else -> SyncPhase.COMPLETED
                     }
                     _batchSyncState.value = currentState.copy(currentPhase = newPhase)
+
+                    // Mostrar notificaciones de progreso
+                    val percent = (progress * 100).toInt()
+                    when (newPhase) {
+                        SyncPhase.CALCULATING_HASHES -> {
+                            SyncNotificationHelper.showHashingProgressNotification(
+                                context = context,
+                                progressPercent = percent
+                            )
+                        }
+                        SyncPhase.CHECKING_SERVER -> {
+                            SyncNotificationHelper.showCheckingServerNotification(context)
+                        }
+                        else -> { /* Upload notifications are handled in uploadProgressInfo collector */ }
+                    }
                 }
             }
         }
@@ -132,6 +149,15 @@ class SyncViewModel @Inject constructor(
                     _batchSyncState.value = currentState.copy(
                         currentUploadIndex = progressInfo.currentIndex,
                         totalToUpload = progressInfo.totalCount
+                    )
+
+                    // Mostrar notificación de progreso de subida
+                    val percent = ((progressInfo.currentIndex.toFloat() / progressInfo.totalCount) * 100).toInt()
+                    SyncNotificationHelper.showUploadProgressNotification(
+                        context = context,
+                        currentFile = progressInfo.currentIndex,
+                        totalFiles = progressInfo.totalCount,
+                        progressPercent = 50 + (percent / 2) // 50-100% para fase de uploads
                     )
                 }
             }
@@ -211,20 +237,38 @@ class SyncViewModel @Inject constructor(
 
             syncRepository.syncBatch(localMediaItems, autoUpload)
                 .onSuccess { result ->
-                    Log.d(TAG, "Batch sync completed: ${result.alreadySynced.size} synced, ${result.needsUpload.size} pending")
+                    Log.d(TAG, "Batch sync completed: ${result.alreadySynced.size} synced, ${result.needsUpload.size} pending, cancelled: ${result.wasCancelled}")
 
                     // Guardar URIs pendientes para reintento manual
                     pendingUploadUris = result.needsUpload
 
+                    // Determinar la fase según si fue cancelado o completado
+                    val phase = if (result.wasCancelled) SyncPhase.CANCELLED else SyncPhase.COMPLETED
+
                     _batchSyncState.value = BatchSyncState(
                         isActive = false,
-                        currentPhase = SyncPhase.COMPLETED,
+                        currentPhase = phase,
                         alreadySyncedCount = result.alreadySynced.size,
                         pendingUploadCount = result.needsUpload.size - result.uploadedCount,
                         uploadedCount = result.uploadedCount,
                         failedCount = result.failedCount,
                         totalSyncedCount = syncRepository.getSyncedMediaCount()
                     )
+
+                    // Resetear progreso
+                    _syncProgress.value = 0f
+
+                    // Mostrar notificación de completado o cancelado
+                    if (result.wasCancelled) {
+                        SyncNotificationHelper.showSyncCancelledNotification(context)
+                    } else {
+                        SyncNotificationHelper.showSyncCompleteNotification(
+                            context = context,
+                            uploadedCount = result.uploadedCount,
+                            alreadySyncedCount = result.alreadySynced.size,
+                            failedCount = result.failedCount
+                        )
+                    }
 
                     val message = buildSyncResultMessage(result)
                     _successMessage.value = message
@@ -235,6 +279,13 @@ class SyncViewModel @Inject constructor(
                         isActive = false,
                         currentPhase = SyncPhase.ERROR
                     )
+
+                    // Mostrar notificación de error
+                    SyncNotificationHelper.showSyncErrorNotification(
+                        context = context,
+                        errorMessage = exception.message ?: "Error durante la sincronización"
+                    )
+
                     Log.e(TAG, "Batch sync failed", exception)
                 }
 
@@ -256,11 +307,15 @@ class SyncViewModel @Inject constructor(
         Log.d(TAG, "Cancel sync requested")
         syncRepository.cancelSync()
         _batchSyncState.value = _batchSyncState.value.copy(
-            currentPhase = SyncPhase.COMPLETED,
+            currentPhase = SyncPhase.CANCELLED,
             isActive = false
         )
+        _syncProgress.value = 0f
         _isSyncing.value = false
         _successMessage.value = "Sincronización cancelada"
+
+        // Mostrar notificación de cancelado
+        SyncNotificationHelper.showSyncCancelledNotification(context)
     }
 
     /**
@@ -329,6 +384,7 @@ class SyncViewModel @Inject constructor(
             SyncPhase.CHECKING_SERVER -> "Verificando con el servidor..."
             SyncPhase.UPLOADING -> "Subiendo archivos..."
             SyncPhase.COMPLETED -> "Sincronización completada"
+            SyncPhase.CANCELLED -> "Sincronización cancelada"
             SyncPhase.ERROR -> "Error en la sincronización"
         }
     }

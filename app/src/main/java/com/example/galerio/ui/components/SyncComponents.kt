@@ -39,8 +39,17 @@ fun SyncProgressIndicator(
     onCancelClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    // Solo mostrar cuando está activamente sincronizando (no en estados terminales)
+    val isActivePhase = phase == SyncPhase.CALCULATING_HASHES ||
+            phase == SyncPhase.CHECKING_SERVER ||
+            phase == SyncPhase.UPLOADING
+
+    val isActiveStatus = status == SyncStatus.UPLOADING ||
+            status == SyncStatus.PENDING ||
+            status == SyncStatus.DOWNLOADING
+
     AnimatedVisibility(
-        visible = status == SyncStatus.UPLOADING || status == SyncStatus.PENDING || status == SyncStatus.DOWNLOADING,
+        visible = isActivePhase && isActiveStatus,
         enter = fadeIn() + slideInVertically(),
         exit = fadeOut() + slideOutVertically(),
         modifier = modifier
@@ -141,6 +150,7 @@ private fun getPhaseTitle(phase: SyncPhase, status: SyncStatus): String {
         SyncPhase.CHECKING_SERVER -> "Verificando con servidor"
         SyncPhase.UPLOADING -> "Subiendo archivos"
         SyncPhase.COMPLETED -> "Completado"
+        SyncPhase.CANCELLED -> "Cancelado"
         SyncPhase.ERROR -> "Error"
         else -> when (status) {
             SyncStatus.UPLOADING -> "Subiendo archivos"
@@ -163,6 +173,7 @@ private fun getPhaseDescription(phase: SyncPhase, progress: Float, batchSyncStat
             }
         }
         SyncPhase.COMPLETED -> "Sincronización finalizada"
+        SyncPhase.CANCELLED -> "La sincronización fue cancelada"
         SyncPhase.ERROR -> "Se produjo un error durante la sincronización"
         else -> "Progreso: ${(progress * 100).toInt()}%"
     }
@@ -460,8 +471,15 @@ fun SyncResultCard(
             batchSyncState.failedCount > 0 ||
             batchSyncState.pendingUploadCount > 0
 
+    val isTerminalPhase = batchSyncState.currentPhase == SyncPhase.COMPLETED ||
+            batchSyncState.currentPhase == SyncPhase.CANCELLED ||
+            batchSyncState.currentPhase == SyncPhase.ERROR
+
+    val isCancelled = batchSyncState.currentPhase == SyncPhase.CANCELLED
+    val isError = batchSyncState.currentPhase == SyncPhase.ERROR || batchSyncState.failedCount > 0
+
     AnimatedVisibility(
-        visible = hasResults && batchSyncState.currentPhase == SyncPhase.COMPLETED,
+        visible = (hasResults || isCancelled) && isTerminalPhase,
         enter = fadeIn() + slideInVertically(),
         exit = fadeOut() + slideOutVertically(),
         modifier = modifier
@@ -471,10 +489,10 @@ fun SyncResultCard(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (batchSyncState.failedCount > 0) {
-                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-                } else {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                containerColor = when {
+                    isCancelled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                    isError -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                    else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
                 }
             )
         ) {
@@ -488,24 +506,24 @@ fun SyncResultCard(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(
-                        imageVector = if (batchSyncState.failedCount > 0) {
-                            Icons.Default.Warning
-                        } else {
-                            Icons.Default.Check
+                        imageVector = when {
+                            isCancelled -> Icons.Default.Close
+                            isError -> Icons.Default.Warning
+                            else -> Icons.Default.Check
                         },
                         contentDescription = null,
-                        tint = if (batchSyncState.failedCount > 0) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.primary
+                        tint = when {
+                            isCancelled -> MaterialTheme.colorScheme.onSurfaceVariant
+                            isError -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.primary
                         }
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = if (batchSyncState.failedCount > 0) {
-                            "Sincronización con errores"
-                        } else {
-                            "Sincronización completada"
+                        text = when {
+                            isCancelled -> "Sincronización cancelada"
+                            isError -> "Sincronización con errores"
+                            else -> "Sincronización completada"
                         },
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f)
