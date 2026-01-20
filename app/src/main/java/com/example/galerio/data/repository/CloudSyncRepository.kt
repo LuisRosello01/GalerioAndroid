@@ -374,10 +374,37 @@ class CloudSyncRepository @Inject constructor(
 
             _syncStatus.value = SyncStatus.PENDING
 
-            // 1. Calcular hashes de los archivos locales
-            Log.d(TAG, "[BATCH_SYNC] Step 1: Calculating hashes...")
+            // 0. Filtrar archivos que ya están sincronizados localmente
+            // Usamos getAllSyncedUris() para evitar límites de SQLite con muchos parámetros
+            Log.d(TAG, "[BATCH_SYNC] Step 0: Filtering already synced items...")
+            val alreadySyncedUris = syncedMediaDao.getAllSyncedUris().toSet()
+
+            // Items que necesitan verificación con el servidor (no están en la BD local)
+            val itemsToCheck = localMediaItems.filter { it.uri !in alreadySyncedUris }
+            val alreadySyncedCount = localMediaItems.size - itemsToCheck.size
+
+            Log.d(TAG, "[BATCH_SYNC] Already synced locally: $alreadySyncedCount, need to check: ${itemsToCheck.size}")
+
+            // Si todos los archivos ya están sincronizados, retornar inmediatamente
+            if (itemsToCheck.isEmpty()) {
+                Log.d(TAG, "[BATCH_SYNC] All items already synced locally, nothing to do")
+                _syncStatus.value = SyncStatus.SYNCED
+                _syncProgress.value = 1f
+
+                // Obtener los cloudIds de los items ya sincronizados para el resultado
+                val syncedItems = syncedMediaDao.getByUris(localMediaItems.map { it.uri })
+                return@withContext Result.success(BatchSyncResult(
+                    alreadySynced = syncedItems.associate { it.localUri to it.cloudId },
+                    needsUpload = emptyList(),
+                    uploadedCount = 0,
+                    failedCount = 0
+                ))
+            }
+
+            // 1. Calcular hashes solo de los archivos que no están sincronizados
+            Log.d(TAG, "[BATCH_SYNC] Step 1: Calculating hashes for ${itemsToCheck.size} items...")
             val contentResolver = context.contentResolver
-            val uris = localMediaItems.mapNotNull {
+            val uris = itemsToCheck.mapNotNull {
                 try {
                     it.uri.toUri()
                 } catch (e: Exception) {
@@ -390,14 +417,19 @@ class CloudSyncRepository @Inject constructor(
                 contentResolver = contentResolver,
                 uris = uris,
                 onProgress = { progress ->
-                    _syncProgress.value = progress * 0.3f // 0-30% para cálculo de hashes
+                    _syncProgress.value = progress * 0.9f // 0-90% para cálculo de hashes
                 }
             )
             Log.d(TAG, "[BATCH_SYNC] Calculated ${hashesMap.size} hashes")
 
             if (hashesMap.isEmpty()) {
                 Log.d(TAG, "[BATCH_SYNC] No valid hashes calculated")
-                return@withContext Result.success(BatchSyncResult(emptyMap(), emptyList()))
+                _syncStatus.value = SyncStatus.SYNCED
+                _syncProgress.value = 1f
+                return@withContext Result.success(BatchSyncResult(
+                    alreadySynced = emptyMap(),
+                    needsUpload = emptyList()
+                ))
             }
 
             // 2. Enviar hashes al servidor
@@ -419,10 +451,10 @@ class CloudSyncRepository @Inject constructor(
             }
 
             val syncResponse = response.body()
-            val alreadySynced = syncResponse?.alreadySynced ?: emptyMap()
+            val alreadySyncedFromServer = syncResponse?.alreadySynced ?: emptyMap()
             val needsUpload = syncResponse?.needsUpload ?: emptyList()
 
-            Log.d(TAG, "[BATCH_SYNC] Server response - already_synced: ${alreadySynced.size}, needs_upload: ${needsUpload.size}")
+            Log.d(TAG, "[BATCH_SYNC] Server response - already_synced: ${alreadySyncedFromServer.size}, needs_upload: ${needsUpload.size}")
 
             if (syncResponse?.filters != null) {
                 Log.d(TAG, "[BATCH_SYNC] Filters: requested=${syncResponse.filters.syncRequested}, matched=${syncResponse.filters.syncMatched}, pending=${syncResponse.filters.syncPending}")
@@ -430,9 +462,9 @@ class CloudSyncRepository @Inject constructor(
 
             // 3. Guardar already_synced en Room
             Log.d(TAG, "[BATCH_SYNC] Step 3: Saving synced items to local database...")
-            saveSyncedItems(alreadySynced, hashesMap)
+            saveSyncedItems(alreadySyncedFromServer, hashesMap)
 
-            _syncProgress.value = 0.5f // 50% completado
+            _syncProgress.value = 0.95f // 95% completado
 
             // 4. Subir archivos pendientes si autoUpload está habilitado
             var uploadedCount = 0
@@ -440,7 +472,7 @@ class CloudSyncRepository @Inject constructor(
 
             if (autoUpload && needsUpload.isNotEmpty()) {
                 Log.d(TAG, "[BATCH_SYNC] Step 4: Auto-uploading ${needsUpload.size} pending files...")
-                val uploadResult = uploadPendingMedia(needsUpload, localMediaItems, hashesMap)
+                val uploadResult = uploadPendingMedia(needsUpload, itemsToCheck, hashesMap)
                 uploadedCount = uploadResult.first
                 failedCount = uploadResult.second
             }
@@ -448,10 +480,14 @@ class CloudSyncRepository @Inject constructor(
             _syncStatus.value = SyncStatus.SYNCED
             _syncProgress.value = 1f
 
-            Log.d(TAG, "[BATCH_SYNC] Sync completed - synced: ${alreadySynced.size}, uploaded: $uploadedCount, failed: $failedCount")
+            // Combinar items sincronizados localmente (por conteo) + items sincronizados desde servidor
+            // alreadySyncedFromServer ya contiene los nuevos, alreadySyncedCount tiene los previos
+            val totalSyncedCount = alreadySyncedCount + alreadySyncedFromServer.size
+
+            Log.d(TAG, "[BATCH_SYNC] Sync completed - locally synced: $alreadySyncedCount, server synced: ${alreadySyncedFromServer.size}, total: $totalSyncedCount, uploaded: $uploadedCount, failed: $failedCount")
 
             Result.success(BatchSyncResult(
-                alreadySynced = alreadySynced,
+                alreadySynced = alreadySyncedFromServer, // Solo reportamos los nuevos sincronizados en esta sesión
                 needsUpload = needsUpload,
                 uploadedCount = uploadedCount,
                 failedCount = failedCount

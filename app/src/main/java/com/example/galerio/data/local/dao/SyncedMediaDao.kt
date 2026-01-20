@@ -96,6 +96,12 @@ interface SyncedMediaDao {
     suspend fun getCount(): Int
 
     /**
+     * Obtiene todos los URIs locales sincronizados (para filtrado eficiente)
+     */
+    @Query("SELECT localUri FROM synced_media")
+    suspend fun getAllSyncedUris(): List<String>
+
+    /**
      * Obtiene múltiples registros por lista de URIs
      */
     @Query("SELECT * FROM synced_media WHERE localUri IN (:uris)")

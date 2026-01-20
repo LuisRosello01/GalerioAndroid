@@ -35,11 +35,12 @@ class MediaViewModel @Inject constructor(
     val syncedUris: StateFlow<Set<String>> = _syncedUris.asStateFlow()
 
     // Lógica de agrupación movida al ViewModel para optimizar la UI
+    // Usa dateTaken (fecha de captura) si está disponible, si no usa dateModified para consistencia con el servidor
     val groupedMediaItems: StateFlow<Map<String, List<MediaItem>>> = _mediaItems
         .map { items ->
             val formatter = DateTimeFormatter.ofPattern("EEE, d MMM", Locale.getDefault())
             items.groupBy { mediaItem ->
-                Instant.ofEpochMilli(mediaItem.dateModified)
+                Instant.ofEpochMilli(mediaItem.dateTaken ?: mediaItem.dateModified)
                     .atZone(ZoneId.systemDefault())
                     .toLocalDate()
                     .format(formatter)
