@@ -64,6 +64,15 @@ class CloudSyncRepository @Inject constructor(
     private val _syncProgress = MutableStateFlow(0f)
     val syncProgress: Flow<Float> = _syncProgress.asStateFlow()
 
+    // Progreso detallado de subida (índice actual y total)
+    data class UploadProgressInfo(
+        val currentIndex: Int = 0,
+        val totalCount: Int = 0
+    )
+
+    private val _uploadProgressInfo = MutableStateFlow(UploadProgressInfo())
+    val uploadProgressInfo: Flow<UploadProgressInfo> = _uploadProgressInfo.asStateFlow()
+
     /**
      * Sincroniza los medios locales con la nube
      * Estrategia:
@@ -584,7 +593,19 @@ class CloudSyncRepository @Inject constructor(
 
         _syncStatus.value = SyncStatus.UPLOADING
 
+        // Inicializar progreso detallado de subida
+        _uploadProgressInfo.value = UploadProgressInfo(
+            currentIndex = 0,
+            totalCount = totalToUpload
+        )
+
         needsUpload.forEachIndexed { index, uriString ->
+            // Actualizar progreso detallado antes de subir
+            _uploadProgressInfo.value = UploadProgressInfo(
+                currentIndex = index + 1,
+                totalCount = totalToUpload
+            )
+
             val result = uploadSingleMediaWithRetry(
                 uriString = uriString,
                 localMediaItems = localMediaItems,
@@ -607,6 +628,9 @@ class CloudSyncRepository @Inject constructor(
             val uploadProgress = (index + 1).toFloat() / totalToUpload
             _syncProgress.value = 0.5f + (uploadProgress * 0.5f)
         }
+
+        // Resetear progreso detallado al finalizar
+        _uploadProgressInfo.value = UploadProgressInfo()
 
         if (failedItems.isNotEmpty()) {
             Log.w(TAG, "[UPLOAD] Failed uploads summary: ${failedItems.size} items failed")
