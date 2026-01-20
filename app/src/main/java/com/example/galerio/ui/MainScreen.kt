@@ -129,6 +129,7 @@ fun MainScreen(
                         progress = syncProgress,
                         status = syncStatus,
                         phase = batchSyncState.currentPhase,
+                        batchSyncState = batchSyncState,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
 
