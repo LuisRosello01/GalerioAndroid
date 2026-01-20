@@ -53,6 +53,10 @@ class CloudSyncRepository @Inject constructor(
     // Mutex para evitar múltiples sincronizaciones simultáneas
     private val syncMutex = Mutex()
 
+    // Flag para cancelar la sincronización en curso
+    @Volatile
+    private var isCancelled = false
+
     // Caché de última sincronización
     private var lastSyncTime = 0L
     private var cachedCloudItems: List<MediaItem>? = null
@@ -72,6 +76,19 @@ class CloudSyncRepository @Inject constructor(
 
     private val _uploadProgressInfo = MutableStateFlow(UploadProgressInfo())
     val uploadProgressInfo: Flow<UploadProgressInfo> = _uploadProgressInfo.asStateFlow()
+
+    /**
+     * Cancela la sincronización en curso
+     */
+    fun cancelSync() {
+        isCancelled = true
+        Log.d(TAG, "[SYNC] Cancellation requested")
+    }
+
+    /**
+     * Verifica si la sincronización fue cancelada
+     */
+    fun isSyncCancelled(): Boolean = isCancelled
 
     /**
      * Sincroniza los medios locales con la nube
@@ -393,7 +410,8 @@ class CloudSyncRepository @Inject constructor(
         val alreadySynced: Map<String, String>, // uri -> cloudId
         val needsUpload: List<String>,          // uris que necesitan subirse
         val uploadedCount: Int = 0,
-        val failedCount: Int = 0
+        val failedCount: Int = 0,
+        val wasCancelled: Boolean = false
     )
 
     /**
@@ -546,28 +564,34 @@ class CloudSyncRepository @Inject constructor(
             // 5. Subir archivos pendientes si autoUpload está habilitado
             var uploadedCount = 0
             var failedCount = 0
+            var wasCancelled = false
 
-            if (autoUpload && needsUpload.isNotEmpty()) {
+            if (autoUpload && needsUpload.isNotEmpty() && !isCancelled) {
                 Log.d(TAG, "[BATCH_SYNC] Step 5: Auto-uploading ${needsUpload.size} pending files...")
                 val uploadResult = uploadPendingMedia(needsUpload, itemsToCheck, hashesMap)
-                uploadedCount = uploadResult.first
-                failedCount = uploadResult.second
+                uploadedCount = uploadResult.uploadedCount
+                failedCount = uploadResult.failedCount
+                wasCancelled = uploadResult.wasCancelled
             }
 
-            _syncStatus.value = SyncStatus.SYNCED
+            // Resetear flag de cancelación para la próxima sincronización
+            isCancelled = false
+
+            _syncStatus.value = if (wasCancelled) SyncStatus.PENDING else SyncStatus.SYNCED
             _syncProgress.value = 1f
 
             // Combinar items sincronizados localmente (por conteo) + items sincronizados desde servidor
             // alreadySyncedFromServer ya contiene los nuevos, alreadySyncedCount tiene los previos
             val totalSyncedCount = alreadySyncedCount + alreadySyncedFromServer.size
 
-            Log.d(TAG, "[BATCH_SYNC] Sync completed - locally synced: $alreadySyncedCount, server synced: ${alreadySyncedFromServer.size}, total: $totalSyncedCount, uploaded: $uploadedCount, failed: $failedCount")
+            Log.d(TAG, "[BATCH_SYNC] Sync completed - locally synced: $alreadySyncedCount, server synced: ${alreadySyncedFromServer.size}, total: $totalSyncedCount, uploaded: $uploadedCount, failed: $failedCount, cancelled: $wasCancelled")
 
             Result.success(BatchSyncResult(
                 alreadySynced = alreadySyncedFromServer, // Solo reportamos los nuevos sincronizados en esta sesión
                 needsUpload = needsUpload,
                 uploadedCount = uploadedCount,
-                failedCount = failedCount
+                failedCount = failedCount,
+                wasCancelled = wasCancelled
             ))
 
         } catch (e: Exception) {
@@ -578,16 +602,27 @@ class CloudSyncRepository @Inject constructor(
     }
 
     /**
+     * Resultado de la subida de archivos pendientes
+     */
+    data class UploadBatchResult(
+        val uploadedCount: Int,
+        val failedCount: Int,
+        val cancelledCount: Int,
+        val wasCancelled: Boolean
+    )
+
+    /**
      * Sube los archivos pendientes a la nube con reintentos
-     * @return Par (uploadedCount, failedCount)
+     * @return UploadBatchResult con conteos de subidos, fallidos y cancelados
      */
     private suspend fun uploadPendingMedia(
         needsUpload: List<String>,
         localMediaItems: List<MediaItem>,
         hashesMap: Map<String, String>
-    ): Pair<Int, Int> {
+    ): UploadBatchResult {
         var uploadedCount = 0
         var failedCount = 0
+        var cancelledCount = 0
         val totalToUpload = needsUpload.size
         val failedItems = mutableListOf<UploadFailure>()
 
@@ -599,7 +634,14 @@ class CloudSyncRepository @Inject constructor(
             totalCount = totalToUpload
         )
 
-        needsUpload.forEachIndexed { index, uriString ->
+        for ((index, uriString) in needsUpload.withIndex()) {
+            // Verificar si se solicitó cancelación
+            if (isCancelled) {
+                cancelledCount = totalToUpload - index
+                Log.d(TAG, "[UPLOAD] Cancelled. Remaining: $cancelledCount files")
+                break
+            }
+
             // Actualizar progreso detallado antes de subir
             _uploadProgressInfo.value = UploadProgressInfo(
                 currentIndex = index + 1,
@@ -639,7 +681,12 @@ class CloudSyncRepository @Inject constructor(
             }
         }
 
-        return Pair(uploadedCount, failedCount)
+        return UploadBatchResult(
+            uploadedCount = uploadedCount,
+            failedCount = failedCount,
+            cancelledCount = cancelledCount,
+            wasCancelled = isCancelled
+        )
     }
 
     /**
