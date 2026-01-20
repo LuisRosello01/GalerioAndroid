@@ -11,8 +11,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,7 +52,8 @@ fun VideoCard(
     mediaItem: MediaItem,
     context: Context,
     imageLoader: ImageLoader,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    isSynced: Boolean = false // Indica si el archivo local está sincronizado con la nube
 ) {
     val coroutineScope = rememberCoroutineScope()
 
@@ -58,6 +62,10 @@ fun VideoCard(
 
     val useRemoteThumbnail = mediaItem.thumbnailUri?.isNotEmpty() == true && !remoteThumbnailFailed
     val isLocalVideo = remember(mediaItem.uri) { mediaItem.uri.startsWith("content://") }
+
+    // Determinar el estado de sincronización
+    val showSyncIndicator = !mediaItem.isCloudItem // Solo mostrar en items locales
+    val isLocalSynced = isSynced || mediaItem.cloudId != null
 
     LaunchedEffect(mediaItem.uri, useRemoteThumbnail) {
         if (!useRemoteThumbnail && isLocalVideo) {
@@ -117,6 +125,30 @@ fun VideoCard(
                 }
             }
 
+            // Indicador de sincronización (esquina superior derecha)
+            if (showSyncIndicator) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(4.dp)
+                        .size(20.dp)
+                        .background(
+                            color = if (isLocalSynced) Color(0xFF4CAF50).copy(alpha = 0.85f)
+                                    else Color(0xFF757575).copy(alpha = 0.85f),
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isLocalSynced) Icons.Default.CloudDone else Icons.Default.CloudOff,
+                        contentDescription = if (isLocalSynced) "Sincronizado" else "No sincronizado",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+
+            // Duración del video (esquina inferior derecha)
             mediaItem.duration?.let { duration ->
                 Text(
                     text = formatDuration(duration),
@@ -134,6 +166,7 @@ fun VideoCard(
                 )
             }
 
+            // Icono de play (centro)
             Icon(
                 imageVector = Icons.Filled.PlayArrow,
                 contentDescription = "Play",
