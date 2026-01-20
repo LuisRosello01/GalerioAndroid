@@ -26,6 +26,7 @@ import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
+import androidx.core.net.toUri
 
 /**
  * Repository para sincronización bidireccional con la nube
@@ -42,6 +43,8 @@ class CloudSyncRepository @Inject constructor(
     companion object {
         private const val TAG = "CloudSyncRepository"
         private const val CACHE_DURATION_MS = 30_000L // 30 segundos de caché
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val RETRY_DELAY_MS = 1000L
     }
 
     // Mutex para evitar múltiples sincronizaciones simultáneas
@@ -360,7 +363,7 @@ class CloudSyncRepository @Inject constructor(
             val contentResolver = context.contentResolver
             val uris = localMediaItems.mapNotNull {
                 try {
-                    Uri.parse(it.uri)
+                    it.uri.toUri()
                 } catch (e: Exception) {
                     Log.w(TAG, "[BATCH_SYNC] Invalid URI: ${it.uri}")
                     null
@@ -446,7 +449,7 @@ class CloudSyncRepository @Inject constructor(
     }
 
     /**
-     * Sube los archivos pendientes a la nube
+     * Sube los archivos pendientes a la nube con reintentos
      * @return Par (uploadedCount, failedCount)
      */
     private suspend fun uploadPendingMedia(
@@ -457,63 +460,133 @@ class CloudSyncRepository @Inject constructor(
         var uploadedCount = 0
         var failedCount = 0
         val totalToUpload = needsUpload.size
+        val failedItems = mutableListOf<UploadFailure>()
 
         _syncStatus.value = SyncStatus.UPLOADING
 
         needsUpload.forEachIndexed { index, uriString ->
-            try {
-                val mediaItem = localMediaItems.find { it.uri == uriString }
-                if (mediaItem == null) {
-                    Log.w(TAG, "[UPLOAD] Media item not found for URI: $uriString")
+            val result = uploadSingleMediaWithRetry(
+                uriString = uriString,
+                localMediaItems = localMediaItems,
+                hashesMap = hashesMap,
+                maxRetries = MAX_RETRY_ATTEMPTS
+            )
+
+            when (result) {
+                is UploadResult.Success -> uploadedCount++
+                is UploadResult.Failure -> {
                     failedCount++
-                    return@forEachIndexed
+                    failedItems.add(UploadFailure(uriString, result.error))
                 }
-
-                // Crear archivo temporal desde ContentResolver
-                val uri = Uri.parse(uriString)
-                val tempFile = createTempFileFromUri(uri, mediaItem.type.name.lowercase())
-
-                if (tempFile == null) {
-                    Log.w(TAG, "[UPLOAD] Could not create temp file for: $uriString")
-                    failedCount++
-                    return@forEachIndexed
+                is UploadResult.Skipped -> {
+                    Log.d(TAG, "[UPLOAD] Skipped: $uriString - ${result.reason}")
                 }
+            }
 
-                try {
-                    val result = uploadMedia(mediaItem, tempFile)
-                    if (result.isSuccess) {
-                        val cloudItem = result.getOrNull()
-                        if (cloudItem != null) {
-                            // Guardar en Room el nuevo mapping
-                            val hash = hashesMap[uriString] ?: ""
-                            syncedMediaDao.insert(SyncedMediaEntity(
-                                localUri = uriString,
-                                cloudId = cloudItem.id,
-                                hash = hash,
-                                syncedAt = System.currentTimeMillis()
-                            ))
-                            uploadedCount++
-                        }
-                    } else {
-                        Log.e(TAG, "[UPLOAD] Failed to upload: $uriString", result.exceptionOrNull())
-                        failedCount++
-                    }
-                } finally {
-                    // Limpiar archivo temporal
-                    tempFile.delete()
-                }
+            // Actualizar progreso (50-100% para uploads)
+            val uploadProgress = (index + 1).toFloat() / totalToUpload
+            _syncProgress.value = 0.5f + (uploadProgress * 0.5f)
+        }
 
-                // Actualizar progreso (50-100% para uploads)
-                val uploadProgress = (index + 1).toFloat() / totalToUpload
-                _syncProgress.value = 0.5f + (uploadProgress * 0.5f)
-
-            } catch (e: Exception) {
-                Log.e(TAG, "[UPLOAD] Error uploading $uriString", e)
-                failedCount++
+        if (failedItems.isNotEmpty()) {
+            Log.w(TAG, "[UPLOAD] Failed uploads summary: ${failedItems.size} items failed")
+            failedItems.forEach { failure ->
+                Log.w(TAG, "[UPLOAD] - ${failure.uri}: ${failure.error}")
             }
         }
 
         return Pair(uploadedCount, failedCount)
+    }
+
+    /**
+     * Resultado de un intento de subida
+     */
+    private sealed class UploadResult {
+        data class Success(val cloudId: String) : UploadResult()
+        data class Failure(val error: String) : UploadResult()
+        data class Skipped(val reason: String) : UploadResult()
+    }
+
+    /**
+     * Información de un fallo de subida
+     */
+    private data class UploadFailure(val uri: String, val error: String)
+
+    /**
+     * Sube un archivo con reintentos
+     */
+    private suspend fun uploadSingleMediaWithRetry(
+        uriString: String,
+        localMediaItems: List<MediaItem>,
+        hashesMap: Map<String, String>,
+        maxRetries: Int
+    ): UploadResult {
+        val mediaItem = localMediaItems.find { it.uri == uriString }
+            ?: return UploadResult.Skipped("Media item not found for URI")
+
+        val uri = try {
+            Uri.parse(uriString)
+        } catch (e: Exception) {
+            return UploadResult.Skipped("Invalid URI format")
+        }
+
+        var lastError: String = "Unknown error"
+
+        repeat(maxRetries) { attempt ->
+            val tempFile = createTempFileFromUri(uri, mediaItem.type.name.lowercase())
+
+            if (tempFile == null) {
+                lastError = "Could not create temp file"
+                Log.w(TAG, "[UPLOAD] Attempt ${attempt + 1}/$maxRetries - Failed to create temp file for: $uriString")
+                return@repeat
+            }
+
+            try {
+                Log.d(TAG, "[UPLOAD] Attempt ${attempt + 1}/$maxRetries for: $uriString")
+
+                val result = uploadMedia(mediaItem, tempFile)
+
+                if (result.isSuccess) {
+                    val cloudItem = result.getOrNull()
+                    if (cloudItem != null) {
+                        // Guardar en Room el nuevo mapping
+                        val hash = hashesMap[uriString] ?: ""
+                        syncedMediaDao.insert(SyncedMediaEntity(
+                            localUri = uriString,
+                            cloudId = cloudItem.id,
+                            hash = hash,
+                            syncedAt = System.currentTimeMillis()
+                        ))
+                        Log.d(TAG, "[UPLOAD] Success on attempt ${attempt + 1}: $uriString -> ${cloudItem.id}")
+                        return UploadResult.Success(cloudItem.id)
+                    }
+                }
+
+                lastError = result.exceptionOrNull()?.message ?: "Upload returned null"
+                Log.w(TAG, "[UPLOAD] Attempt ${attempt + 1}/$maxRetries failed: $lastError")
+
+                // Esperar antes de reintentar (backoff exponencial)
+                if (attempt < maxRetries - 1) {
+                    val delayMs = RETRY_DELAY_MS * (attempt + 1)
+                    Log.d(TAG, "[UPLOAD] Waiting ${delayMs}ms before retry...")
+                    kotlinx.coroutines.delay(delayMs)
+                }
+
+            } catch (e: Exception) {
+                lastError = e.message ?: "Exception during upload"
+                Log.e(TAG, "[UPLOAD] Exception on attempt ${attempt + 1}/$maxRetries", e)
+
+                if (attempt < maxRetries - 1) {
+                    val delayMs = RETRY_DELAY_MS * (attempt + 1)
+                    kotlinx.coroutines.delay(delayMs)
+                }
+            } finally {
+                // Limpiar archivo temporal
+                tempFile.delete()
+            }
+        }
+
+        return UploadResult.Failure(lastError)
     }
 
     /**
@@ -544,16 +617,56 @@ class CloudSyncRepository @Inject constructor(
     }
 
     /**
-     * Crea un archivo temporal desde un URI de contenido
+     * Crea un archivo temporal desde un URI de contenido con la extensión correcta
      */
-    private fun createTempFileFromUri(uri: Uri, prefix: String): File? {
+    private fun createTempFileFromUri(uri: Uri, mediaType: String): File? {
         return try {
             val inputStream = context.contentResolver.openInputStream(uri) ?: return null
-            val tempFile = File.createTempFile(prefix, null, context.cacheDir)
+
+            // Obtener el MIME type real del archivo
+            val mimeType = context.contentResolver.getType(uri)
+
+            // Determinar la extensión correcta
+            val extension = when {
+                mimeType?.startsWith("image/jpeg") == true -> ".jpg"
+                mimeType?.startsWith("image/png") == true -> ".png"
+                mimeType?.startsWith("image/gif") == true -> ".gif"
+                mimeType?.startsWith("image/webp") == true -> ".webp"
+                mimeType?.startsWith("image/heic") == true -> ".heic"
+                mimeType?.startsWith("image/heif") == true -> ".heif"
+                mimeType?.startsWith("video/mp4") == true -> ".mp4"
+                mimeType?.startsWith("video/3gpp") == true -> ".3gp"
+                mimeType?.startsWith("video/webm") == true -> ".webm"
+                mimeType?.startsWith("video/quicktime") == true -> ".mov"
+                mimeType?.startsWith("video/x-matroska") == true -> ".mkv"
+                mimeType?.startsWith("video/") == true -> ".mp4" // Default para videos
+                mimeType?.startsWith("image/") == true -> ".jpg" // Default para imágenes
+                mediaType == "video" -> ".mp4"
+                else -> ".jpg"
+            }
+
+            // Intentar obtener el nombre original del archivo
+            var originalName: String? = null
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0) {
+                        originalName = cursor.getString(nameIndex)
+                    }
+                }
+            }
+
+            // Crear nombre del archivo temporal
+            val fileName = originalName?.substringBeforeLast(".")
+                ?: "upload_${System.currentTimeMillis()}"
+
+            val tempFile = File.createTempFile(fileName, extension, context.cacheDir)
             tempFile.outputStream().use { outputStream ->
                 inputStream.copyTo(outputStream)
             }
             inputStream.close()
+
+            Log.d(TAG, "[UPLOAD] Created temp file: ${tempFile.name} (mimeType: $mimeType)")
             tempFile
         } catch (e: Exception) {
             Log.e(TAG, "Error creating temp file from URI: $uri", e)

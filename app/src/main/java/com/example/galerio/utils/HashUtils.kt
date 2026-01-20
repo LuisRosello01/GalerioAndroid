@@ -77,7 +77,7 @@ object HashUtils {
         val result = mutableMapOf<String, String>()
 
         uris.forEachIndexed { index, uri ->
-            val hash = calculateMD5(contentResolver, uri)
+            val hash = calculateSHA256(contentResolver, uri)
             if (hash != null) {
                 result[uri.toString()] = hash
             }
