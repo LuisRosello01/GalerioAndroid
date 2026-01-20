@@ -5,6 +5,7 @@ import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import coil.ImageLoader
 import coil.ImageLoaderFactory
+import com.example.galerio.notification.SyncNotificationHelper
 import com.example.galerio.worker.SyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
@@ -29,6 +30,9 @@ class GalerioApplication : Application(), ImageLoaderFactory, Configuration.Prov
 
     override fun onCreate() {
         super.onCreate()
+
+        // Crear canales de notificación
+        SyncNotificationHelper.createNotificationChannels(this)
 
         // Programar sincronización periódica en background (cada 6 horas con WiFi)
         SyncWorker.schedulePeriodicSync(
