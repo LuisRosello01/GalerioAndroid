@@ -43,6 +43,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Receiver para acciones de notificación de sincronización -->
+        <receiver
+            android:name=".notification.SyncNotificationReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.galerio.ACTION_CANCEL_SYNC" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

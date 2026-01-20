@@ -237,6 +237,18 @@ class SyncWorker @AssistedInject constructor(
                     Log.d(TAG, "Needs upload: ${syncResult?.needsUpload?.size ?: 0}")
                     Log.d(TAG, "Uploaded: ${syncResult?.uploadedCount ?: 0}")
                     Log.d(TAG, "Failed: ${syncResult?.failedCount ?: 0}")
+                    Log.d(TAG, "Cancelled: ${syncResult?.wasCancelled ?: false}")
+
+                    // Si fue cancelado, mostrar notificación de cancelado
+                    if (syncResult?.wasCancelled == true) {
+                        SyncNotificationHelper.showSyncCancelledNotification(applicationContext)
+                        return@coroutineScope Result.success(workDataOf(
+                            KEY_STATUS to "cancelled",
+                            KEY_UPLOADED to (syncResult.uploadedCount),
+                            KEY_FAILED to (syncResult.failedCount),
+                            KEY_TOTAL to (syncResult.alreadySynced.size)
+                        ))
+                    }
 
                     // Mostrar notificación de completado
                     SyncNotificationHelper.showSyncCompleteNotification(

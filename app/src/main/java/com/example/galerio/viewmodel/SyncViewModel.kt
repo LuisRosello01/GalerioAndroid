@@ -250,6 +250,20 @@ class SyncViewModel @Inject constructor(
     }
 
     /**
+     * Cancela la sincronización en curso
+     */
+    fun cancelSync() {
+        Log.d(TAG, "Cancel sync requested")
+        syncRepository.cancelSync()
+        _batchSyncState.value = _batchSyncState.value.copy(
+            currentPhase = SyncPhase.COMPLETED,
+            isActive = false
+        )
+        _isSyncing.value = false
+        _successMessage.value = "Sincronización cancelada"
+    }
+
+    /**
      * Reintenta subir los archivos que fallaron
      */
     fun retryFailedUploads() {

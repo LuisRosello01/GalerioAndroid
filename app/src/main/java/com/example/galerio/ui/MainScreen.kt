@@ -130,6 +130,7 @@ fun MainScreen(
                         status = syncStatus,
                         phase = batchSyncState.currentPhase,
                         batchSyncState = batchSyncState,
+                        onCancelClick = { syncViewModel.cancelSync() },
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     )
 

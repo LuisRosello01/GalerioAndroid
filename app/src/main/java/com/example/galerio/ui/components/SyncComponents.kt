@@ -36,6 +36,7 @@ fun SyncProgressIndicator(
     status: SyncStatus,
     phase: SyncPhase = SyncPhase.IDLE,
     batchSyncState: BatchSyncState = BatchSyncState(),
+    onCancelClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -60,14 +61,15 @@ fun SyncProgressIndicator(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         strokeWidth = 3.dp,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Column {
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = getPhaseTitle(phase, status),
                             style = MaterialTheme.typography.titleSmall,
@@ -78,6 +80,19 @@ fun SyncProgressIndicator(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
+                    }
+                    // Botón de cancelar
+                    if (onCancelClick != null && (phase == SyncPhase.UPLOADING || phase == SyncPhase.CALCULATING_HASHES)) {
+                        IconButton(
+                            onClick = onCancelClick,
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancelar",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
                     }
                 }
 

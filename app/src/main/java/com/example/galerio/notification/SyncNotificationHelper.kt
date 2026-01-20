@@ -105,6 +105,21 @@ object SyncNotificationHelper {
     }
 
     /**
+     * Crea un PendingIntent para cancelar la sincronización
+     */
+    private fun createCancelSyncIntent(context: Context): PendingIntent {
+        val intent = Intent(SyncNotificationReceiver.ACTION_CANCEL_SYNC).apply {
+            setPackage(context.packageName)
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            1,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /**
      * Muestra notificación de progreso de subida
      * @param currentFile Archivo actual que se está subiendo (1-based)
      * @param totalFiles Total de archivos a subir
@@ -126,6 +141,11 @@ object SyncNotificationHelper {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(createOpenAppIntent(context))
+            .addAction(
+                R.drawable.ic_cloud_error,
+                "Cancelar",
+                createCancelSyncIntent(context)
+            )
             .setStyle(
                 NotificationCompat.BigTextStyle()
                     .bigText("Subiendo $currentFile de $totalFiles archivos\nProgreso total: $progressPercent%")
@@ -152,6 +172,11 @@ object SyncNotificationHelper {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(createOpenAppIntent(context))
+            .addAction(
+                R.drawable.ic_cloud_error,
+                "Cancelar",
+                createCancelSyncIntent(context)
+            )
             .build()
 
         NotificationManagerCompat.from(context).notify(NOTIFICATION_ID_SYNC_PROGRESS, notification)
@@ -171,6 +196,11 @@ object SyncNotificationHelper {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(createOpenAppIntent(context))
+            .addAction(
+                R.drawable.ic_cloud_error,
+                "Cancelar",
+                createCancelSyncIntent(context)
+            )
             .build()
 
         NotificationManagerCompat.from(context).notify(NOTIFICATION_ID_SYNC_PROGRESS, notification)
@@ -272,6 +302,26 @@ object SyncNotificationHelper {
      */
     fun cancelProgressNotification(context: Context) {
         NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID_SYNC_PROGRESS)
+    }
+
+    /**
+     * Muestra notificación de sincronización cancelada
+     */
+    fun showSyncCancelledNotification(context: Context) {
+        if (!hasNotificationPermission(context)) return
+
+        // Cancelar la notificación de progreso
+        cancelProgressNotification(context)
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID_SYNC_COMPLETE)
+            .setSmallIcon(R.drawable.ic_cloud_error)
+            .setContentTitle("Sincronización cancelada")
+            .setContentText("La subida de archivos fue cancelada")
+            .setAutoCancel(true)
+            .setContentIntent(createOpenAppIntent(context))
+            .build()
+
+        NotificationManagerCompat.from(context).notify(NOTIFICATION_ID_SYNC_COMPLETE, notification)
     }
 
     /**
