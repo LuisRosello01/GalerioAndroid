@@ -11,7 +11,9 @@ fun MediaItem.toEntity(): MediaItemEntity {
     return MediaItemEntity(
         uri = this.uri,
         type = this.type,
+        dateTaken = this.dateTaken,
         dateModified = this.dateModified,
+        dateAdded = this.dateAdded,
         relativePath = this.relativePath,
         duration = this.duration
     )
@@ -21,7 +23,9 @@ fun MediaItemEntity.toMediaItem(): MediaItem {
     return MediaItem(
         uri = this.uri,
         type = this.type,
+        dateTaken = this.dateTaken,
         dateModified = this.dateModified,
+        dateAdded = this.dateAdded,
         relativePath = this.relativePath,
         duration = this.duration
     )

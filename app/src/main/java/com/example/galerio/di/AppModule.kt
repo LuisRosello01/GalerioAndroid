@@ -52,7 +52,7 @@ object AppModule {
             AppDatabase::class.java,
             AppDatabase.DATABASE_NAME
         )
-            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
             .fallbackToDestructiveMigration()
             .build()
     }
@@ -74,9 +74,10 @@ object AppModule {
     fun provideMediaRepository(
         @ApplicationContext context: Context,
         mediaItemDao: MediaItemDao,
-        cloudSyncRepository: CloudSyncRepository
+        cloudSyncRepository: CloudSyncRepository,
+        syncedMediaDao: SyncedMediaDao
     ): MediaRepository {
-        return MediaRepository(context, mediaItemDao, cloudSyncRepository)
+        return MediaRepository(context, mediaItemDao, cloudSyncRepository, syncedMediaDao)
     }
 
     // ============ AUTENTICACIÓN ============

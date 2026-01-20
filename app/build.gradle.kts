@@ -52,6 +52,10 @@ android {
     }
 }
 
+tasks.withType<Test> {
+    systemProperty("net.bytebuddy.experimental", "true")
+}
+
 dependencies {
 
     implementation(libs.androidx.core.ktx)
@@ -112,6 +116,7 @@ dependencies {
     testImplementation("app.cash.turbine:turbine:1.0.0")
     testImplementation("com.google.truth:truth:1.1.5")
     testImplementation("androidx.arch.core:core-testing:2.2.0")
+    testImplementation(libs.robolectric)
 
     // Hilt Testing
     testImplementation("com.google.dagger:hilt-android-testing:2.48")

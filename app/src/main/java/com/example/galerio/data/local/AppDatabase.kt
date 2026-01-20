@@ -17,7 +17,7 @@ import com.example.galerio.data.local.entity.SyncedMediaEntity
  */
 @Database(
     entities = [MediaItemEntity::class, SyncedMediaEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(Converters::class, UriConverter::class)
@@ -42,6 +42,16 @@ abstract class AppDatabase : RoomDatabase() {
                         syncedAt INTEGER NOT NULL
                     )
                 """)
+            }
+        }
+
+        /**
+         * Migración de versión 2 a 3: añade columnas dateTaken y dateAdded a media_items
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE media_items ADD COLUMN dateTaken INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE media_items ADD COLUMN dateAdded INTEGER DEFAULT NULL")
             }
         }
     }

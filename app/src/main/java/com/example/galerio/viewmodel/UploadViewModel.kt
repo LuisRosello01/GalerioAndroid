@@ -69,20 +69,70 @@ class UploadViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Determinar el tipo de media basándose en el MIME type
-                val mediaType = withContext(Dispatchers.IO) {
-                    val mimeType = context.contentResolver.getType(uriString.toUri())
-                    when {
-                        mimeType?.startsWith("video/") == true -> MediaType.Video
-                        else -> MediaType.Image
+                // Determinar el tipo de media y obtener fechas del MediaStore
+                val mediaInfo = withContext(Dispatchers.IO) {
+                    val uri = uriString.toUri()
+                    val mimeType = context.contentResolver.getType(uri)
+                    val isVideo = mimeType?.startsWith("video/") == true
+                    val mediaType = if (isVideo) MediaType.Video else MediaType.Image
+
+                    // Obtener fechas del MediaStore
+                    var dateTaken: Long? = null
+                    var dateModified: Long = System.currentTimeMillis()
+                    var dateAdded: Long? = null
+
+                    try {
+                        val projection = if (isVideo) {
+                            arrayOf(
+                                android.provider.MediaStore.Video.Media.DATE_TAKEN,
+                                android.provider.MediaStore.Video.Media.DATE_MODIFIED,
+                                android.provider.MediaStore.Video.Media.DATE_ADDED
+                            )
+                        } else {
+                            arrayOf(
+                                android.provider.MediaStore.Images.Media.DATE_TAKEN,
+                                android.provider.MediaStore.Images.Media.DATE_MODIFIED,
+                                android.provider.MediaStore.Images.Media.DATE_ADDED
+                            )
+                        }
+
+                        context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val dateTakenColumn = cursor.getColumnIndex(projection[0])
+                                val dateModifiedColumn = cursor.getColumnIndex(projection[1])
+                                val dateAddedColumn = cursor.getColumnIndex(projection[2])
+
+                                if (dateTakenColumn >= 0) {
+                                    val value = cursor.getLong(dateTakenColumn)
+                                    if (value > 0) dateTaken = value
+                                }
+                                if (dateModifiedColumn >= 0) {
+                                    val value = cursor.getLong(dateModifiedColumn)
+                                    if (value > 0) dateModified = value * 1000 // Convertir a ms
+                                }
+                                if (dateAddedColumn >= 0) {
+                                    val value = cursor.getLong(dateAddedColumn)
+                                    if (value > 0) dateAdded = value * 1000 // Convertir a ms
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error getting media dates from MediaStore", e)
                     }
+
+                    Triple(mediaType, Triple(dateTaken, dateModified, dateAdded), Unit)
                 }
 
-                // Crear MediaItem
+                val mediaType = mediaInfo.first
+                val (dateTaken, dateModified, dateAdded) = mediaInfo.second
+
+                // Crear MediaItem con todas las fechas
                 val mediaItem = MediaItem(
                     uri = uriString,
                     type = mediaType,
-                    dateModified = System.currentTimeMillis()
+                    dateTaken = dateTaken,
+                    dateModified = dateModified,
+                    dateAdded = dateAdded
                 )
 
                 _uploadProgress.value = 0.2f

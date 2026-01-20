@@ -151,7 +151,9 @@ class CloudSyncRepository @Inject constructor(
                     MediaItem(
                         uri = cloudItem.getFileUrl(CloudApiService.BASE_URL),
                         type = mediaType,
+                        dateTaken = cloudItem.dateTaken,
                         dateModified = cloudItem.lastModified,
+                        dateAdded = cloudItem.dateAdded,
                         relativePath = null,
                         duration = cloudItem.duration,
                         isCloudItem = true,
@@ -214,8 +216,10 @@ class CloudSyncRepository @Inject constructor(
             val filePart = MultipartBody.Part.createFormData("file", file.name, requestBody)
 
             // Metadata en JSON con hash incluido
+            val dateTakenJson = mediaItem.dateTaken?.toString() ?: "null"
+            val dateAddedJson = mediaItem.dateAdded?.toString() ?: "null"
             val metadata =
-                """{"type":"${mediaItem.type.name.lowercase()}","dateModified":${mediaItem.dateModified},"hash":"$fileHash"}"""
+                """{"type":"${mediaItem.type.name.lowercase()}","date_taken":$dateTakenJson,"date_modified":${mediaItem.dateModified},"date_added":$dateAddedJson,"hash":"$fileHash"}"""
                     .toRequestBody(
                         "application/json".toMediaTypeOrNull()
                     )

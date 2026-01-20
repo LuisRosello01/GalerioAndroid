@@ -19,8 +19,12 @@ data class CloudMediaItem(
     val path: String,
 
     // Timestamps
+    @SerializedName("date_taken")
+    val dateTaken: Long? = null, // Fecha de captura (EXIF)
     @SerializedName("last_modified")
     val lastModified: Long, // timestamp en milisegundos
+    @SerializedName("date_added")
+    val dateAdded: Long? = null, // Fecha añadida al dispositivo
     @SerializedName("uploaded_at")
     val uploadedAt: Long?, // timestamp en milisegundos
 

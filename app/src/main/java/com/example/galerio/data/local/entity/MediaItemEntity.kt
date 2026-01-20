@@ -16,7 +16,9 @@ data class MediaItemEntity(
     @PrimaryKey
     val uri: String,
     val type: MediaType,
-    val dateModified: Long,
+    val dateTaken: Long? = null,    // Fecha de captura (EXIF)
+    val dateModified: Long,         // Fecha de modificación del archivo
+    val dateAdded: Long? = null,    // Fecha añadida al dispositivo
     val relativePath: String?,
     val duration: Long?,
     val cachedAt: Long = System.currentTimeMillis() // Timestamp del caché
