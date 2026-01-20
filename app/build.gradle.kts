@@ -109,6 +109,9 @@ dependencies {
     // DataStore para guardar credenciales de forma segura
     implementation(libs.datastore.preferences)
 
+    // ExifInterface para leer metadatos GPS de fotos
+    implementation(libs.exifinterface)
+
     // Testing
     testImplementation(libs.junit)
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

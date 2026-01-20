@@ -31,6 +31,7 @@ datastore = "1.2.0"
 paging = "3.3.6"
 pagingCompose = "3.3.6"
 robolectric = "4.11.1"
+exifinterface = "1.4.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -84,6 +85,7 @@ hilt-work-compiler = { group = "androidx.hilt", name = "hilt-compiler", version 
 # DataStore para preferencias seguras
 datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+exifinterface = { group = "androidx.exifinterface", name = "exifinterface", version.ref = "exifinterface" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

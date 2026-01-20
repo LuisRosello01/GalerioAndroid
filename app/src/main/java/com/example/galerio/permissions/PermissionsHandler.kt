@@ -32,15 +32,22 @@ fun RequestMediaPermissions(
 
     // En Android 14+ (UPSIDE_DOWN_CAKE), necesitamos manejar READ_MEDIA_VISUAL_USER_SELECTED
     // para detectar si el usuario seleccionó acceso parcial vs completo
+    // ACCESS_MEDIA_LOCATION se incluye en Android 10+ para poder leer datos GPS de las fotos
     val permissions = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> listOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
             android.Manifest.permission.READ_MEDIA_VIDEO,
-            android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            android.Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED,
+            android.Manifest.permission.ACCESS_MEDIA_LOCATION
         )
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> listOf(
             android.Manifest.permission.READ_MEDIA_IMAGES,
-            android.Manifest.permission.READ_MEDIA_VIDEO
+            android.Manifest.permission.READ_MEDIA_VIDEO,
+            android.Manifest.permission.ACCESS_MEDIA_LOCATION
+        )
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> listOf(
+            android.Manifest.permission.READ_EXTERNAL_STORAGE,
+            android.Manifest.permission.ACCESS_MEDIA_LOCATION
         )
         else -> listOf(android.Manifest.permission.READ_EXTERNAL_STORAGE)
     }

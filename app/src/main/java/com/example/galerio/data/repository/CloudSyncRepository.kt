@@ -13,6 +13,7 @@ import com.example.galerio.data.model.cloud.CloudMediaItem
 import com.example.galerio.data.model.cloud.SyncStatus
 import com.example.galerio.data.remote.api.CloudApiService
 import com.example.galerio.utils.HashUtils
+import com.example.galerio.utils.LocationUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -197,8 +198,14 @@ class CloudSyncRepository @Inject constructor(
      * @param mediaItem El MediaItem a subir
      * @param file El archivo a subir
      * @param hash Hash SHA-256 del archivo (opcional, se calcula si no se proporciona)
+     * @param originalUri URI original del archivo para extraer GPS (opcional)
      */
-    suspend fun uploadMedia(mediaItem: MediaItem, file: File, hash: String? = null): Result<CloudMediaItem> = withContext(Dispatchers.IO) {
+    suspend fun uploadMedia(
+        mediaItem: MediaItem,
+        file: File,
+        hash: String? = null,
+        originalUri: Uri? = null
+    ): Result<CloudMediaItem> = withContext(Dispatchers.IO) {
         try {
             _syncStatus.value = SyncStatus.UPLOADING
 
@@ -209,20 +216,41 @@ class CloudSyncRepository @Inject constructor(
             val fileHash = hash ?: HashUtils.calculateFileHash(file)
             Log.d(TAG, "File hash: $fileHash")
 
+            // Extraer datos GPS del archivo original (si está disponible)
+            val gpsLocation = originalUri?.let { uri ->
+                try {
+                    LocationUtils.extractGpsLocation(context.contentResolver, uri)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not extract GPS from $uri: ${e.message}")
+                    null
+                }
+            }
+
+            if (gpsLocation != null) {
+                Log.d(TAG, "GPS data found: lat=${gpsLocation.latitude}, lon=${gpsLocation.longitude}")
+            } else {
+                Log.d(TAG, "No GPS data available for this file")
+            }
+
             // Crear el multipart body con el MIME type correcto
             val mimeType = getMimeTypeFromFile(file, mediaItem.type.name.lowercase())
             Log.d(TAG, "Uploading file ${file.name} with MIME type: $mimeType")
             val requestBody = file.asRequestBody(mimeType.toMediaTypeOrNull())
             val filePart = MultipartBody.Part.createFormData("file", file.name, requestBody)
 
-            // Metadata en JSON con hash incluido
+            // Metadata en JSON con hash y GPS incluidos
             val dateTakenJson = mediaItem.dateTaken?.toString() ?: "null"
             val dateAddedJson = mediaItem.dateAdded?.toString() ?: "null"
-            val metadata =
-                """{"type":"${mediaItem.type.name.lowercase()}","date_taken":$dateTakenJson,"date_modified":${mediaItem.dateModified},"date_added":$dateAddedJson,"hash":"$fileHash"}"""
-                    .toRequestBody(
-                        "application/json".toMediaTypeOrNull()
-                    )
+
+            // Construir JSON de metadata incluyendo GPS si está disponible
+            val metadata = buildMetadataJson(
+                type = mediaItem.type.name.lowercase(),
+                dateTaken = dateTakenJson,
+                dateModified = mediaItem.dateModified,
+                dateAdded = dateAddedJson,
+                hash = fileHash,
+                gpsLocation = gpsLocation
+            ).toRequestBody("application/json".toMediaTypeOrNull())
 
             val response = apiService.uploadMedia("Bearer $token", user.id, filePart, metadata)
 
@@ -318,6 +346,14 @@ class CloudSyncRepository @Inject constructor(
 
             if (response.isSuccessful) {
                 Log.d(TAG, "Delete successful: $mediaId")
+
+                // Eliminar el registro de sincronización local
+                syncedMediaDao.deleteByCloudId(mediaId)
+                Log.d(TAG, "Local sync record deleted for: $mediaId")
+
+                // Limpiar caché para reflejar el cambio
+                clearSyncCache()
+
                 Result.success(Unit)
             } else {
                 val errorBody = response.errorBody()?.string()
@@ -374,45 +410,39 @@ class CloudSyncRepository @Inject constructor(
 
             _syncStatus.value = SyncStatus.PENDING
 
-            // 0. Filtrar archivos que ya están sincronizados localmente
-            // Usamos getAllSyncedUris() para evitar límites de SQLite con muchos parámetros
-            Log.d(TAG, "[BATCH_SYNC] Step 0: Filtering already synced items...")
+            // 0. Obtener URIs sincronizados localmente para referencia
+            Log.d(TAG, "[BATCH_SYNC] Step 0: Getting locally synced items for reference...")
             val alreadySyncedUris = syncedMediaDao.getAllSyncedUris().toSet()
+            val alreadySyncedCount = localMediaItems.count { it.uri in alreadySyncedUris }
 
-            // Items que necesitan verificación con el servidor (no están en la BD local)
-            val itemsToCheck = localMediaItems.filter { it.uri !in alreadySyncedUris }
-            val alreadySyncedCount = localMediaItems.size - itemsToCheck.size
+            Log.d(TAG, "[BATCH_SYNC] Locally marked as synced: $alreadySyncedCount, total items: ${localMediaItems.size}")
 
-            Log.d(TAG, "[BATCH_SYNC] Already synced locally: $alreadySyncedCount, need to check: ${itemsToCheck.size}")
-
-            // Si todos los archivos ya están sincronizados, retornar inmediatamente
-            if (itemsToCheck.isEmpty()) {
-                Log.d(TAG, "[BATCH_SYNC] All items already synced locally, nothing to do")
-                _syncStatus.value = SyncStatus.SYNCED
-                _syncProgress.value = 1f
-
-                // Obtener los cloudIds de los items ya sincronizados para el resultado
-                val syncedItems = syncedMediaDao.getByUris(localMediaItems.map { it.uri })
-                return@withContext Result.success(BatchSyncResult(
-                    alreadySynced = syncedItems.associate { it.localUri to it.cloudId },
-                    needsUpload = emptyList(),
-                    uploadedCount = 0,
-                    failedCount = 0
-                ))
-            }
+            // IMPORTANTE: Verificamos TODOS los archivos con el servidor, no solo los nuevos
+            // Esto permite detectar cuando un archivo fue eliminado del servidor
+            val itemsToCheck = localMediaItems
 
             // 1. Obtener hashes cacheados y calcular solo los que faltan
             Log.d(TAG, "[BATCH_SYNC] Step 1: Getting cached hashes and calculating missing ones...")
             val contentResolver = context.contentResolver
             val uriStrings = itemsToCheck.map { it.uri }
 
-            // 1a. Buscar hashes ya calculados en la BD
+            // 1a. Buscar hashes desde SyncedMediaEntity (archivos previamente sincronizados)
+            val syncedMediaHashes = syncedMediaDao.getByUris(uriStrings)
+                .associate { it.localUri to it.hash }
+            Log.d(TAG, "[BATCH_SYNC] Found ${syncedMediaHashes.size} hashes from synced media")
+
+            // 1b. Buscar hashes ya calculados en MediaItemDao
             val cachedHashPairs = mediaItemDao.getCachedHashes(uriStrings)
             val cachedHashes = cachedHashPairs.associate { it.uri to it.hash }
-            Log.d(TAG, "[BATCH_SYNC] Found ${cachedHashes.size} cached hashes")
+            Log.d(TAG, "[BATCH_SYNC] Found ${cachedHashes.size} cached hashes from media items")
 
-            // 1b. Identificar URIs que necesitan calcular hash
-            val urisNeedingHash = mediaItemDao.getUrisNeedingHashCalculation(uriStrings)
+            // 1c. Combinar hashes de ambas fuentes (syncedMedia tiene prioridad)
+            val allCachedHashes = cachedHashes + syncedMediaHashes
+            Log.d(TAG, "[BATCH_SYNC] Total cached hashes: ${allCachedHashes.size}")
+
+            // 1d. Identificar URIs que necesitan calcular hash (no están en ninguna de las fuentes)
+            val urisWithHash = allCachedHashes.keys
+            val urisNeedingHash = uriStrings.filter { it !in urisWithHash }
             Log.d(TAG, "[BATCH_SYNC] Need to calculate hash for ${urisNeedingHash.size} items")
 
             // 1c. Calcular hashes solo para los que faltan
@@ -446,9 +476,9 @@ class CloudSyncRepository @Inject constructor(
             }
             Log.d(TAG, "[BATCH_SYNC] Calculated ${newlyCalculatedHashes.size} new hashes")
 
-            // 1d. Combinar hashes cacheados + nuevos
-            val hashesMap = cachedHashes + newlyCalculatedHashes
-            Log.d(TAG, "[BATCH_SYNC] Total hashes: ${hashesMap.size} (${cachedHashes.size} cached + ${newlyCalculatedHashes.size} new)")
+            // 1e. Combinar hashes cacheados + nuevos
+            val hashesMap = allCachedHashes + newlyCalculatedHashes
+            Log.d(TAG, "[BATCH_SYNC] Total hashes: ${hashesMap.size} (${allCachedHashes.size} cached + ${newlyCalculatedHashes.size} new)")
 
             _syncProgress.value = 0.45f // 45% - hashes listos
 
@@ -490,18 +520,26 @@ class CloudSyncRepository @Inject constructor(
                 Log.d(TAG, "[BATCH_SYNC] Filters: requested=${syncResponse.filters.syncRequested}, matched=${syncResponse.filters.syncMatched}, pending=${syncResponse.filters.syncPending}")
             }
 
-            // 3. Guardar already_synced en Room
-            Log.d(TAG, "[BATCH_SYNC] Step 3: Saving synced items to local database...")
+            // 3. Limpiar registros de sincronización obsoletos
+            // Si el servidor dice que un archivo necesita subirse, significa que ya no existe en el servidor
+            // Por lo tanto, debemos eliminar el registro de sincronización local si existe
+            if (needsUpload.isNotEmpty()) {
+                Log.d(TAG, "[BATCH_SYNC] Step 3a: Cleaning obsolete sync records for ${needsUpload.size} items...")
+                cleanObsoleteSyncRecords(needsUpload)
+            }
+
+            // 4. Guardar already_synced en Room
+            Log.d(TAG, "[BATCH_SYNC] Step 4: Saving synced items to local database...")
             saveSyncedItems(alreadySyncedFromServer, hashesMap)
 
             _syncProgress.value = 0.95f // 95% completado
 
-            // 4. Subir archivos pendientes si autoUpload está habilitado
+            // 5. Subir archivos pendientes si autoUpload está habilitado
             var uploadedCount = 0
             var failedCount = 0
 
             if (autoUpload && needsUpload.isNotEmpty()) {
-                Log.d(TAG, "[BATCH_SYNC] Step 4: Auto-uploading ${needsUpload.size} pending files...")
+                Log.d(TAG, "[BATCH_SYNC] Step 5: Auto-uploading ${needsUpload.size} pending files...")
                 val uploadResult = uploadPendingMedia(needsUpload, itemsToCheck, hashesMap)
                 uploadedCount = uploadResult.first
                 failedCount = uploadResult.second
@@ -627,8 +665,8 @@ class CloudSyncRepository @Inject constructor(
             try {
                 Log.d(TAG, "[UPLOAD] Attempt ${attempt + 1}/$maxRetries for: $uriString")
 
-                // Pasar el hash existente para evitar recalcularlo
-                val result = uploadMedia(mediaItem, tempFile, existingHash)
+                // Pasar el hash existente y la URI original para extraer GPS
+                val result = uploadMedia(mediaItem, tempFile, existingHash, uri)
 
                 if (result.isSuccess) {
                     val cloudItem = result.getOrNull()
@@ -697,6 +735,30 @@ class CloudSyncRepository @Inject constructor(
         if (syncedEntities.isNotEmpty()) {
             syncedMediaDao.insertAll(syncedEntities)
             Log.d(TAG, "[BATCH_SYNC] Saved ${syncedEntities.size} synced items to database")
+        }
+    }
+
+    /**
+     * Elimina los registros de sincronización para URIs que el servidor indica que necesitan subirse.
+     * Esto ocurre cuando un archivo fue eliminado del servidor pero aún existe localmente como "sincronizado".
+     */
+    private suspend fun cleanObsoleteSyncRecords(needsUploadUris: List<String>) {
+        var deletedCount = 0
+
+        for (uri in needsUploadUris) {
+            // Verificar si existe un registro de sincronización para esta URI
+            val syncedMedia = syncedMediaDao.getByUri(uri)
+            if (syncedMedia != null) {
+                // El archivo está marcado como sincronizado localmente, pero el servidor dice que necesita subirse
+                // Esto significa que fue eliminado del servidor, así que limpiamos el registro local
+                Log.d(TAG, "[BATCH_SYNC] Removing obsolete sync record for: $uri (was cloudId: ${syncedMedia.cloudId})")
+                syncedMediaDao.deleteByUri(uri)
+                deletedCount++
+            }
+        }
+
+        if (deletedCount > 0) {
+            Log.d(TAG, "[BATCH_SYNC] Cleaned $deletedCount obsolete sync records")
         }
     }
 
@@ -807,5 +869,42 @@ class CloudSyncRepository @Inject constructor(
             "video" -> "video/mp4"
             else -> "application/octet-stream"
         }
+    }
+
+    /**
+     * Construye el JSON de metadata para el upload, incluyendo datos GPS si están disponibles.
+     */
+    private fun buildMetadataJson(
+        type: String,
+        dateTaken: String,
+        dateModified: Long,
+        dateAdded: String,
+        hash: String?,
+        gpsLocation: LocationUtils.GpsLocation?
+    ): String {
+        val sb = StringBuilder()
+        sb.append("{")
+        sb.append("\"type\":\"$type\",")
+        sb.append("\"date_taken\":$dateTaken,")
+        sb.append("\"date_modified\":$dateModified,")
+        sb.append("\"date_added\":$dateAdded,")
+        sb.append("\"hash\":\"$hash\"")
+
+        // Agregar datos GPS si están disponibles
+        if (gpsLocation != null) {
+            sb.append(",\"latitude\":${gpsLocation.latitude}")
+            sb.append(",\"longitude\":${gpsLocation.longitude}")
+
+            gpsLocation.altitude?.let { altitude ->
+                sb.append(",\"altitude\":$altitude")
+            }
+
+            gpsLocation.timestamp?.let { timestamp ->
+                sb.append(",\"gps_timestamp\":\"$timestamp\"")
+            }
+        }
+
+        sb.append("}")
+        return sb.toString()
     }
 }
