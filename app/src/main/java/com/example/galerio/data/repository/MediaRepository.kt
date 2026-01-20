@@ -138,7 +138,8 @@ open class MediaRepository(
             }
 
             val sortedList = mediaList.sortedByDescending { it.dateModified }
-            mediaItemDao?.insertAll(sortedList.toEntityList())
+            // Usar upsert que preserva hashes (por si acaso hay alguno de una sesión anterior)
+            mediaItemDao?.upsertAllPreservingHashes(sortedList.toEntityList())
 
             Log.d(TAG, "Loaded ${sortedList.size} local items from MediaStore")
             return Result.success(sortedList)
@@ -150,17 +151,37 @@ open class MediaRepository(
 
 
     /**
-     * Fuerza una recarga desde MediaStore (ignora caché)
+     * Fuerza una recarga desde MediaStore (preservando hashes cacheados)
      */
     open suspend fun forceRefresh(): Result<List<MediaItem>> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Force refresh: clearing cache and reloading")
+            Log.d(TAG, "Force refresh: reloading from MediaStore (preserving hashes)")
 
-            // Limpiar caché
-            mediaItemDao?.deleteAll()
+            // NO eliminamos el caché para preservar los hashes
+            // Solo limpiamos el caché de sincronización de nube
             cloudSyncRepository.clearSyncCache()
 
-            // Recargar todo
+            // Recargar desde MediaStore
+            val mediaList = mutableListOf<MediaItem>()
+            context?.let {
+                mediaList.addAll(loadImages(it))
+                mediaList.addAll(loadVideos(it))
+            }
+
+            val sortedList = mediaList.sortedByDescending { it.dateModified }
+
+            // Usar upsert que preserva los hashes existentes
+            mediaItemDao?.upsertAllPreservingHashes(sortedList.toEntityList())
+
+            // Eliminar items que ya no existen en MediaStore
+            val currentUris = sortedList.map { it.uri }
+            if (currentUris.isNotEmpty()) {
+                mediaItemDao?.deleteNotIn(currentUris)
+            }
+
+            Log.d(TAG, "Force refresh completed: ${sortedList.size} items (hashes preserved)")
+
+            // Cargar los datos combinados (local + nube)
             getDeviceMedia()
         } catch (e: Exception) {
             Log.e(TAG, "Error during force refresh", e)

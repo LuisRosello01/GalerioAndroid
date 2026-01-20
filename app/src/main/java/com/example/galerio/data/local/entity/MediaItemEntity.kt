@@ -1,6 +1,5 @@
 package com.example.galerio.data.local.entity
 
-import android.net.Uri
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverters
@@ -21,6 +20,8 @@ data class MediaItemEntity(
     val dateAdded: Long? = null,    // Fecha añadida al dispositivo
     val relativePath: String?,
     val duration: Long?,
-    val cachedAt: Long = System.currentTimeMillis() // Timestamp del caché
+    val cachedAt: Long = System.currentTimeMillis(), // Timestamp del caché
+    val hash: String? = null,       // SHA-256 hash para sincronización (cacheado)
+    val hashCalculatedAt: Long? = null // Timestamp de cuándo se calculó el hash
 )
 

@@ -17,7 +17,7 @@ import com.example.galerio.data.local.entity.SyncedMediaEntity
  */
 @Database(
     entities = [MediaItemEntity::class, SyncedMediaEntity::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 @TypeConverters(Converters::class, UriConverter::class)
@@ -52,6 +52,16 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE media_items ADD COLUMN dateTaken INTEGER DEFAULT NULL")
                 db.execSQL("ALTER TABLE media_items ADD COLUMN dateAdded INTEGER DEFAULT NULL")
+            }
+        }
+
+        /**
+         * Migración de versión 3 a 4: añade columnas hash y hashCalculatedAt para cachear hashes
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE media_items ADD COLUMN hash TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE media_items ADD COLUMN hashCalculatedAt INTEGER DEFAULT NULL")
             }
         }
     }

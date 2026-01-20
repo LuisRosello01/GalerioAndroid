@@ -401,26 +401,56 @@ class CloudSyncRepository @Inject constructor(
                 ))
             }
 
-            // 1. Calcular hashes solo de los archivos que no están sincronizados
-            Log.d(TAG, "[BATCH_SYNC] Step 1: Calculating hashes for ${itemsToCheck.size} items...")
+            // 1. Obtener hashes cacheados y calcular solo los que faltan
+            Log.d(TAG, "[BATCH_SYNC] Step 1: Getting cached hashes and calculating missing ones...")
             val contentResolver = context.contentResolver
-            val uris = itemsToCheck.mapNotNull {
-                try {
-                    it.uri.toUri()
-                } catch (e: Exception) {
-                    Log.w(TAG, "[BATCH_SYNC] Invalid URI: ${it.uri}")
-                    null
-                }
-            }
+            val uriStrings = itemsToCheck.map { it.uri }
 
-            val hashesMap = HashUtils.calculateHashesForUris(
-                contentResolver = contentResolver,
-                uris = uris,
-                onProgress = { progress ->
-                    _syncProgress.value = progress * 0.9f // 0-90% para cálculo de hashes
+            // 1a. Buscar hashes ya calculados en la BD
+            val cachedHashPairs = mediaItemDao.getCachedHashes(uriStrings)
+            val cachedHashes = cachedHashPairs.associate { it.uri to it.hash }
+            Log.d(TAG, "[BATCH_SYNC] Found ${cachedHashes.size} cached hashes")
+
+            // 1b. Identificar URIs que necesitan calcular hash
+            val urisNeedingHash = mediaItemDao.getUrisNeedingHashCalculation(uriStrings)
+            Log.d(TAG, "[BATCH_SYNC] Need to calculate hash for ${urisNeedingHash.size} items")
+
+            // 1c. Calcular hashes solo para los que faltan
+            val newlyCalculatedHashes = if (urisNeedingHash.isNotEmpty()) {
+                val urisToCalculate = urisNeedingHash.mapNotNull {
+                    try {
+                        it.toUri()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[BATCH_SYNC] Invalid URI: $it")
+                        null
+                    }
                 }
-            )
-            Log.d(TAG, "[BATCH_SYNC] Calculated ${hashesMap.size} hashes")
+
+                val calculated = HashUtils.calculateHashesForUris(
+                    contentResolver = contentResolver,
+                    uris = urisToCalculate,
+                    onProgress = { progress ->
+                        _syncProgress.value = progress * 0.4f // 0-40% para cálculo de hashes
+                    }
+                )
+
+                // Guardar los nuevos hashes en la BD para futuras sincronizaciones
+                if (calculated.isNotEmpty()) {
+                    Log.d(TAG, "[BATCH_SYNC] Saving ${calculated.size} newly calculated hashes to cache")
+                    mediaItemDao.updateHashes(calculated)
+                }
+
+                calculated
+            } else {
+                emptyMap()
+            }
+            Log.d(TAG, "[BATCH_SYNC] Calculated ${newlyCalculatedHashes.size} new hashes")
+
+            // 1d. Combinar hashes cacheados + nuevos
+            val hashesMap = cachedHashes + newlyCalculatedHashes
+            Log.d(TAG, "[BATCH_SYNC] Total hashes: ${hashesMap.size} (${cachedHashes.size} cached + ${newlyCalculatedHashes.size} new)")
+
+            _syncProgress.value = 0.45f // 45% - hashes listos
 
             if (hashesMap.isEmpty()) {
                 Log.d(TAG, "[BATCH_SYNC] No valid hashes calculated")
