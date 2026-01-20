@@ -19,6 +19,8 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.galerio.R
 import com.example.galerio.data.local.dao.MediaItemDao
 import com.example.galerio.data.local.mapper.toMediaItem
@@ -135,8 +137,8 @@ class SyncWorker @AssistedInject constructor(
         /**
          * Obtiene el estado actual del trabajo
          */
-        suspend fun getWorkState(context: Context): WorkInfo.State? {
-            return try {
+        suspend fun getWorkState(context: Context): WorkInfo.State? = withContext(Dispatchers.IO) {
+            try {
                 val workInfos = WorkManager.getInstance(context)
                     .getWorkInfosForUniqueWork(WORK_NAME)
                     .get()
