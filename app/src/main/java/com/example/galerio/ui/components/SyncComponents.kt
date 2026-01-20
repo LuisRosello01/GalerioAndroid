@@ -28,12 +28,14 @@ import com.example.galerio.viewmodel.SyncPhase
 
 /**
  * Indicador de progreso de sincronización mejorado con fases
+ * Muestra una barra de progreso total para todos los archivos pendientes
  */
 @Composable
 fun SyncProgressIndicator(
     progress: Float,
     status: SyncStatus,
     phase: SyncPhase = SyncPhase.IDLE,
+    batchSyncState: BatchSyncState = BatchSyncState(),
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -72,7 +74,7 @@ fun SyncProgressIndicator(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = getPhaseDescription(phase, progress),
+                            text = getPhaseDescription(phase, progress, batchSyncState),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
                         )
@@ -81,6 +83,7 @@ fun SyncProgressIndicator(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Barra de progreso total para todos los archivos
                 LinearProgressIndicator(
                     progress = { progress },
                     modifier = Modifier
@@ -91,11 +94,27 @@ fun SyncProgressIndicator(
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                Text(
-                    text = "${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
-                )
+                // Mostrar progreso detallado con archivos totales
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Contador de archivos si está en fase de subida
+                    if (phase == SyncPhase.UPLOADING && batchSyncState.totalToUpload > 0) {
+                        Text(
+                            text = "${batchSyncState.currentUploadIndex} de ${batchSyncState.totalToUpload} archivos",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.width(1.dp))
+                    }
+                    Text(
+                        text = "${(progress * 100).toInt()}%",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                    )
+                }
             }
         }
     }
@@ -117,11 +136,17 @@ private fun getPhaseTitle(phase: SyncPhase, status: SyncStatus): String {
     }
 }
 
-private fun getPhaseDescription(phase: SyncPhase, progress: Float): String {
+private fun getPhaseDescription(phase: SyncPhase, progress: Float, batchSyncState: BatchSyncState = BatchSyncState()): String {
     return when (phase) {
         SyncPhase.CALCULATING_HASHES -> "Calculando hashes de los archivos locales..."
         SyncPhase.CHECKING_SERVER -> "Comparando con archivos en la nube..."
-        SyncPhase.UPLOADING -> "Subiendo archivos nuevos al servidor..."
+        SyncPhase.UPLOADING -> {
+            if (batchSyncState.totalToUpload > 0) {
+                "Subiendo ${batchSyncState.currentUploadIndex} de ${batchSyncState.totalToUpload} archivos..."
+            } else {
+                "Subiendo archivos nuevos al servidor..."
+            }
+        }
         SyncPhase.COMPLETED -> "Sincronización finalizada"
         SyncPhase.ERROR -> "Se produjo un error durante la sincronización"
         else -> "Progreso: ${(progress * 100).toInt()}%"
