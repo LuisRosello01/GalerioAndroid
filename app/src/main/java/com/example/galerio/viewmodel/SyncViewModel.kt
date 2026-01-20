@@ -124,6 +124,19 @@ class SyncViewModel @Inject constructor(
             }
         }
 
+        // Observar progreso detallado de subida
+        viewModelScope.launch {
+            syncRepository.uploadProgressInfo.collect { progressInfo ->
+                val currentState = _batchSyncState.value
+                if (currentState.isActive && progressInfo.totalCount > 0) {
+                    _batchSyncState.value = currentState.copy(
+                        currentUploadIndex = progressInfo.currentIndex,
+                        totalToUpload = progressInfo.totalCount
+                    )
+                }
+            }
+        }
+
         // Observar configuración de sincronización
         viewModelScope.launch {
             syncSettingsManager.syncSettings.collect { settings ->
