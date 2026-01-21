@@ -714,6 +714,7 @@ private fun SyncSettingSwitch(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SyncIntervalSelector(
     selectedHours: Long,
@@ -728,9 +729,10 @@ private fun SyncIntervalSelector(
         24L to "24 horas"
     )
 
-    Row(
+    FlowRow(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         intervals.forEach { (hours, label) ->
             FilterChip(
