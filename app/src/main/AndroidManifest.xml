@@ -52,6 +52,24 @@
                 <action android:name="com.example.galerio.ACTION_CANCEL_SYNC" />
             </intent-filter>
         </receiver>
+
+        <!-- Servicio de WorkManager para sincronización en background (Android 14+) -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+
+        <!-- Deshabilitar inicialización automática de WorkManager para usar nuestra configuración -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

@@ -5,7 +5,6 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.hilt.work.HiltWorker
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -26,8 +25,6 @@ import com.example.galerio.data.local.dao.MediaItemDao
 import com.example.galerio.data.local.mapper.toMediaItem
 import com.example.galerio.data.repository.CloudSyncRepository
 import com.example.galerio.notification.SyncNotificationHelper
-import dagger.assisted.Assisted
-import dagger.assisted.AssistedInject
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
@@ -42,11 +39,13 @@ import java.util.concurrent.TimeUnit
  * - Solo se ejecuta con conexión WiFi o red no medida
  * - Reporta progreso para notificaciones
  * - Reintentos automáticos con backoff exponencial
+ *
+ * Nota: Usa SyncWorkerFactory para la inyección de dependencias
+ * en lugar de @HiltWorker debido a incompatibilidades con KSP.
  */
-@HiltWorker
-class SyncWorker @AssistedInject constructor(
-    @Assisted appContext: Context,
-    @Assisted workerParams: WorkerParameters,
+class SyncWorker(
+    appContext: Context,
+    workerParams: WorkerParameters,
     private val syncRepository: CloudSyncRepository,
     private val mediaItemDao: MediaItemDao
 ) : CoroutineWorker(appContext, workerParams) {
@@ -147,10 +146,121 @@ class SyncWorker @AssistedInject constructor(
                 null
             }
         }
+
+        /**
+         * Obtiene información de diagnóstico completa sobre el estado del Worker
+         * Útil para depurar si la sincronización en background está funcionando
+         */
+        suspend fun getDiagnosticInfo(context: Context): SyncWorkerDiagnostic = withContext(Dispatchers.IO) {
+            try {
+                val workManager = WorkManager.getInstance(context)
+
+                // Obtener info del trabajo periódico
+                val periodicWorkInfos = workManager
+                    .getWorkInfosForUniqueWork(WORK_NAME)
+                    .get()
+                val periodicInfo = periodicWorkInfos.firstOrNull()
+
+                // Obtener info del trabajo único (sync now)
+                val oneTimeWorkInfos = workManager
+                    .getWorkInfosForUniqueWork(ONE_TIME_WORK_NAME)
+                    .get()
+                val oneTimeInfo = oneTimeWorkInfos.firstOrNull()
+
+                SyncWorkerDiagnostic(
+                    isPeriodicScheduled = periodicInfo != null,
+                    periodicState = periodicInfo?.state?.name ?: "NOT_SCHEDULED",
+                    periodicRunAttemptCount = periodicInfo?.runAttemptCount ?: 0,
+                    periodicNextScheduleTime = periodicInfo?.nextScheduleTimeMillis ?: 0L,
+                    periodicTags = periodicInfo?.tags?.toList() ?: emptyList(),
+                    isOneTimeScheduled = oneTimeInfo != null && oneTimeInfo.state != WorkInfo.State.SUCCEEDED && oneTimeInfo.state != WorkInfo.State.CANCELLED,
+                    oneTimeState = oneTimeInfo?.state?.name ?: "NOT_SCHEDULED",
+                    oneTimeRunAttemptCount = oneTimeInfo?.runAttemptCount ?: 0,
+                    lastProgress = periodicInfo?.progress?.getInt(KEY_PROGRESS, -1) ?: -1,
+                    lastStatus = periodicInfo?.progress?.getString(KEY_STATUS) ?: "unknown"
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "Error getting diagnostic info", e)
+                SyncWorkerDiagnostic(
+                    isPeriodicScheduled = false,
+                    periodicState = "ERROR: ${e.message}",
+                    periodicRunAttemptCount = 0,
+                    periodicNextScheduleTime = 0L,
+                    periodicTags = emptyList(),
+                    isOneTimeScheduled = false,
+                    oneTimeState = "ERROR",
+                    oneTimeRunAttemptCount = 0,
+                    lastProgress = -1,
+                    lastStatus = "error"
+                )
+            }
+        }
+
+        /**
+         * Log de diagnóstico completo - llama esto para verificar el estado en Logcat
+         */
+        suspend fun logDiagnosticInfo(context: Context) {
+            val info = getDiagnosticInfo(context)
+            Log.d(TAG, "========== SYNC WORKER DIAGNOSTIC ==========")
+            Log.d(TAG, "Periodic Work:")
+            Log.d(TAG, "  - Scheduled: ${info.isPeriodicScheduled}")
+            Log.d(TAG, "  - State: ${info.periodicState}")
+            Log.d(TAG, "  - Run Attempts: ${info.periodicRunAttemptCount}")
+            Log.d(TAG, "  - Next Run: ${if (info.periodicNextScheduleTime > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(info.periodicNextScheduleTime)) else "N/A"}")
+            Log.d(TAG, "  - Tags: ${info.periodicTags}")
+            Log.d(TAG, "One-Time Work:")
+            Log.d(TAG, "  - Scheduled: ${info.isOneTimeScheduled}")
+            Log.d(TAG, "  - State: ${info.oneTimeState}")
+            Log.d(TAG, "  - Run Attempts: ${info.oneTimeRunAttemptCount}")
+            Log.d(TAG, "Last Progress: ${info.lastProgress}% - Status: ${info.lastStatus}")
+            Log.d(TAG, "=============================================")
+        }
+    }
+
+    /**
+     * Clase de datos con información de diagnóstico del Worker
+     */
+    data class SyncWorkerDiagnostic(
+        val isPeriodicScheduled: Boolean,
+        val periodicState: String,
+        val periodicRunAttemptCount: Int,
+        val periodicNextScheduleTime: Long,
+        val periodicTags: List<String>,
+        val isOneTimeScheduled: Boolean,
+        val oneTimeState: String,
+        val oneTimeRunAttemptCount: Int,
+        val lastProgress: Int,
+        val lastStatus: String
+    ) {
+        fun toReadableString(): String {
+            val nextRunFormatted = if (periodicNextScheduleTime > 0) {
+                java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault())
+                    .format(java.util.Date(periodicNextScheduleTime))
+            } else "No programado"
+
+            return """
+                |=== Estado del Worker de Sincronización ===
+                |
+                |📅 Trabajo Periódico:
+                |   • Programado: ${if (isPeriodicScheduled) "✅ Sí" else "❌ No"}
+                |   • Estado: $periodicState
+                |   • Intentos: $periodicRunAttemptCount
+                |   • Próxima ejecución: $nextRunFormatted
+                |
+                |⚡ Trabajo Único (Sync Now):
+                |   • Activo: ${if (isOneTimeScheduled) "✅ Sí" else "❌ No"}
+                |   • Estado: $oneTimeState
+                |   • Intentos: $oneTimeRunAttemptCount
+                |
+                |📊 Último Progreso: ${if (lastProgress >= 0) "$lastProgress%" else "Sin datos"}
+                |📋 Último Estado: $lastStatus
+            """.trimMargin()
+        }
     }
 
     override suspend fun doWork(): Result {
         Log.d(TAG, "Starting background sync...")
+
         val autoUpload = inputData.getBoolean(KEY_AUTO_UPLOAD, false)
 
         return try {
@@ -288,8 +398,36 @@ class SyncWorker @AssistedInject constructor(
                     return@coroutineScope Result.retry()
                 }
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Worker fue cancelado - no reintentar
+            Log.w(TAG, "Sync worker cancelled: ${e.message}")
+            SyncNotificationHelper.showSyncCancelledNotification(applicationContext)
+            Result.failure(workDataOf(KEY_STATUS to "cancelled"))
+        } catch (e: IllegalStateException) {
+            // Puede ocurrir si setForeground falla (ej: app en background en Android 12+)
+            Log.e(TAG, "Foreground error: ${e.message}")
+            // Intentar sin foreground service
+            try {
+                val localEntities = mediaItemDao.getAllMedia().first()
+                val localItems = localEntities.map { it.toMediaItem() }.filter { !it.isCloudItem }
+
+                if (localItems.isEmpty()) {
+                    Result.success(workDataOf(KEY_STATUS to "completed", KEY_TOTAL to 0))
+                } else {
+                    val autoUpload = inputData.getBoolean(KEY_AUTO_UPLOAD, false)
+                    val result = syncRepository.syncBatch(localItems, autoUpload)
+                    if (result.isSuccess) {
+                        Result.success(workDataOf(KEY_STATUS to "completed"))
+                    } else {
+                        Result.retry()
+                    }
+                }
+            } catch (innerE: Exception) {
+                Log.e(TAG, "Fallback sync also failed", innerE)
+                Result.retry()
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Background sync error", e)
+            Log.e(TAG, "Background sync error: ${e.message}", e)
             SyncNotificationHelper.showSyncErrorNotification(
                 context = applicationContext,
                 errorMessage = e.message ?: "Error durante la sincronización"

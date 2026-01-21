@@ -486,6 +486,27 @@ class SyncViewModel @Inject constructor(
      */
     fun syncNowInBackground(autoUpload: Boolean = false) {
         SyncWorker.syncNow(context, autoUpload)
-        Log.d(TAG, "Triggered immediate background sync")
+    }
+
+    // Estado del diagnóstico del worker
+    private val _workerDiagnostic = MutableStateFlow<SyncWorker.SyncWorkerDiagnostic?>(null)
+    val workerDiagnostic: StateFlow<SyncWorker.SyncWorkerDiagnostic?> = _workerDiagnostic.asStateFlow()
+
+    /**
+     * Obtiene diagnóstico del Worker de sincronización para verificar si está funcionando
+     */
+    fun checkWorkerDiagnostic() {
+        viewModelScope.launch {
+            SyncWorker.logDiagnosticInfo(context)
+            _workerDiagnostic.value = SyncWorker.getDiagnosticInfo(context)
+        }
+    }
+
+    /**
+     * Obtiene un texto legible del diagnóstico del worker
+     */
+    fun getWorkerDiagnosticText(): String {
+        return _workerDiagnostic.value?.toReadableString()
+            ?: "Diagnóstico no disponible. Llama a checkWorkerDiagnostic() primero."
     }
 }
