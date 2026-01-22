@@ -44,12 +44,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Activity de debug para lanzar sincronización desde ADB -->
+        <activity
+            android:name=".debug.DebugSyncActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+
         <!-- Receiver para acciones de notificación de sincronización -->
         <receiver
             android:name=".notification.SyncNotificationReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.example.galerio.ACTION_CANCEL_SYNC" />
+                <action android:name="com.example.galerio.DEBUG_SYNC_NOW" />
             </intent-filter>
         </receiver>
 

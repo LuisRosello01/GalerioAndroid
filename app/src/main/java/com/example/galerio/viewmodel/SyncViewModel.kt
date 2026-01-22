@@ -311,8 +311,13 @@ class SyncViewModel @Inject constructor(
                 }
             }
             WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
-                if (_batchSyncState.value.isBackgroundSync || _backgroundSyncState.value.isRunning) {
-                    val wasCancelled = workInfo.state == WorkInfo.State.CANCELLED
+                // Siempre resetear el estado cuando el Worker falla o es cancelado
+                val wasCancelled = workInfo.state == WorkInfo.State.CANCELLED
+                val wasBackgroundSync = _batchSyncState.value.isBackgroundSync
+                val wasRunning = _backgroundSyncState.value.isRunning || _batchSyncState.value.isActive
+
+                if (wasBackgroundSync || wasRunning) {
+                    Log.d(TAG, "Worker ${if (wasCancelled) "cancelled" else "failed"} - resetting UI state")
 
                     _backgroundSyncState.value = BackgroundSyncState(isRunning = false)
                     _batchSyncState.value = BatchSyncState(
@@ -353,9 +358,10 @@ class SyncViewModel @Inject constructor(
             SyncWorker.schedulePeriodicSync(
                 context = context,
                 intervalHours = settings.syncIntervalHours,
-                autoUpload = settings.autoUpload
+                autoUpload = settings.autoUpload,
+                wifiOnly = settings.wifiOnly
             )
-            Log.d(TAG, "Background sync scheduled every ${settings.syncIntervalHours} hours")
+            Log.d(TAG, "Background sync scheduled every ${settings.syncIntervalHours} hours (wifiOnly=${settings.wifiOnly}, autoUpload=${settings.autoUpload})")
         } else {
             SyncWorker.cancelScheduledSync(context)
             Log.d(TAG, "Background sync cancelled")

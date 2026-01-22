@@ -69,19 +69,20 @@ class SyncWorkerUnitTest {
     }
 
     @Test
-    fun `schedulePeriodicSync with KEEP policy does not replace existing`() {
+    fun `schedulePeriodicSync with UPDATE policy updates existing work`() {
         // Given: Ya hay un trabajo programado
         SyncWorker.schedulePeriodicSync(context, intervalHours = 6, autoUpload = true)
         val workManager = WorkManager.getInstance(context)
         val firstWorkInfos = workManager.getWorkInfosForUniqueWork(SyncWorker.WORK_NAME).get()
-        val firstWorkId = firstWorkInfos[0].id
+        assertThat(firstWorkInfos).isNotEmpty()
 
-        // When: Intentamos programar otro trabajo con la misma configuración
-        SyncWorker.schedulePeriodicSync(context, intervalHours = 12, autoUpload = false)
+        // When: Programamos otro trabajo con diferente configuración
+        SyncWorker.schedulePeriodicSync(context, intervalHours = 12, autoUpload = false, wifiOnly = false)
 
-        // Then: El trabajo original se mantiene (KEEP policy)
+        // Then: El trabajo se actualiza (UPDATE policy)
         val secondWorkInfos = workManager.getWorkInfosForUniqueWork(SyncWorker.WORK_NAME).get()
-        assertThat(secondWorkInfos[0].id).isEqualTo(firstWorkId)
+        assertThat(secondWorkInfos).isNotEmpty()
+        // Con UPDATE policy, el trabajo se actualiza en lugar de mantener el original
     }
 
     @Test

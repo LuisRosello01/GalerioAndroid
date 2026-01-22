@@ -10,6 +10,7 @@ import com.example.galerio.notification.SyncNotificationHelper
 import com.example.galerio.worker.SyncWorker
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
+import androidx.core.content.edit
 
 @HiltAndroidApp
 class GalerioApplication : Application(), ImageLoaderFactory, Configuration.Provider {
@@ -71,13 +72,14 @@ class GalerioApplication : Application(), ImageLoaderFactory, Configuration.Prov
             SyncWorker.schedulePeriodicSync(
                 context = this,
                 intervalHours = SyncWorker.DEFAULT_SYNC_INTERVAL_HOURS,
-                autoUpload = true
+                autoUpload = true,
+                wifiOnly = true
             )
 
-            prefs.edit()
-                .putBoolean(KEY_PERIODIC_SYNC_SCHEDULED, true)
-                .putInt(KEY_SYNC_VERSION, CURRENT_SYNC_VERSION)
-                .apply()
+            prefs.edit {
+                putBoolean(KEY_PERIODIC_SYNC_SCHEDULED, true)
+                    .putInt(KEY_SYNC_VERSION, CURRENT_SYNC_VERSION)
+            }
         }
     }
 
@@ -106,16 +108,40 @@ class GalerioApplication : Application(), ImageLoaderFactory, Configuration.Prov
      * Fuerza la reprogramación de la sincronización periódica.
      * Llamar cuando el usuario cambie la configuración de sincronización.
      */
-    fun reschedulePeriodicSync(intervalHours: Long = SyncWorker.DEFAULT_SYNC_INTERVAL_HOURS, autoUpload: Boolean = true) {
+    fun reschedulePeriodicSync(
+        intervalHours: Long = SyncWorker.DEFAULT_SYNC_INTERVAL_HOURS,
+        autoUpload: Boolean = true,
+        wifiOnly: Boolean = true
+    ) {
         SyncWorker.schedulePeriodicSync(
             context = this,
             intervalHours = intervalHours,
-            autoUpload = autoUpload
+            autoUpload = autoUpload,
+            wifiOnly = wifiOnly
         )
 
         getSharedPreferences(SYNC_PREFS, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_PERIODIC_SYNC_SCHEDULED, true)
             .apply()
+    }
+
+    /**
+     * Lanza la sincronización background inmediatamente (para testing/debug).
+     * Usa las configuraciones del usuario.
+     *
+     * Para ejecutar desde ADB:
+     * adb shell am broadcast -a com.example.galerio.DEBUG_SYNC_NOW
+     *
+     * O desde el código:
+     * (applicationContext as GalerioApplication).triggerBackgroundSyncNow()
+     */
+    fun triggerBackgroundSyncNow(autoUpload: Boolean = false, wifiOnly: Boolean = false) {
+        SyncWorker.syncNow(
+            context = this,
+            autoUpload = autoUpload,
+            wifiOnly = wifiOnly
+        )
+        android.util.Log.d("GalerioApplication", "Background sync triggered manually (autoUpload=$autoUpload, wifiOnly=$wifiOnly)")
     }
 }

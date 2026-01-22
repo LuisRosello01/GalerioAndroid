@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import com.example.galerio.R
 import com.example.galerio.data.local.dao.MediaItemDao
 import com.example.galerio.data.local.mapper.toMediaItem
+import com.example.galerio.data.local.preferences.SyncSettingsManager
 import com.example.galerio.data.repository.CloudSyncRepository
 import com.example.galerio.notification.SyncNotificationHelper
 import kotlinx.coroutines.flow.first
@@ -52,7 +53,8 @@ class SyncWorker @AssistedInject constructor(
     @Assisted appContext: Context,
     @Assisted workerParams: WorkerParameters,
     private val syncRepository: CloudSyncRepository,
-    private val mediaItemDao: MediaItemDao
+    private val mediaItemDao: MediaItemDao,
+    private val syncSettingsManager: SyncSettingsManager
 ) : CoroutineWorker(appContext, workerParams) {
 
     companion object {
@@ -79,10 +81,12 @@ class SyncWorker @AssistedInject constructor(
         fun schedulePeriodicSync(
             context: Context,
             intervalHours: Long = DEFAULT_SYNC_INTERVAL_HOURS,
-            autoUpload: Boolean = true
+            autoUpload: Boolean = true,
+            wifiOnly: Boolean = true
         ) {
+            val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
             val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.UNMETERED) // Solo WiFi
+                .setRequiredNetworkType(networkType)
                 .setRequiresBatteryNotLow(true)
                 .setRequiresStorageNotLow(true) // Evitar sincronizar si hay poco almacenamiento
                 .build()
@@ -99,21 +103,23 @@ class SyncWorker @AssistedInject constructor(
                 .addTag(WORK_NAME)
                 .build()
 
+            // Usar REPLACE para que se actualice cuando cambien las configuraciones
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.UPDATE,
                 syncRequest
             )
 
-            Log.d(TAG, "Scheduled periodic sync every $intervalHours hours")
+            Log.d(TAG, "Scheduled periodic sync every $intervalHours hours (wifiOnly=$wifiOnly, autoUpload=$autoUpload)")
         }
 
         /**
          * Ejecuta una sincronización inmediata
          */
-        fun syncNow(context: Context, autoUpload: Boolean = false) {
+        fun syncNow(context: Context, autoUpload: Boolean = false, wifiOnly: Boolean = true) {
+            val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
             val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiredNetworkType(networkType)
                 .build()
 
             val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
@@ -135,7 +141,7 @@ class SyncWorker @AssistedInject constructor(
                 syncRequest
             )
 
-            Log.d(TAG, "Enqueued one-time sync (autoUpload=$autoUpload)")
+            Log.d(TAG, "Enqueued one-time sync (autoUpload=$autoUpload, wifiOnly=$wifiOnly)")
         }
 
         /**
@@ -274,7 +280,24 @@ class SyncWorker @AssistedInject constructor(
     override suspend fun doWork(): Result {
         Log.d(TAG, "Starting background sync...")
 
-        val autoUpload = inputData.getBoolean(KEY_AUTO_UPLOAD, false)
+        // Leer configuración del usuario en tiempo de ejecución
+        // Esto asegura que respetamos la configuración actual, no la del momento de programación
+        val userSettings = syncSettingsManager.syncSettings.first()
+
+        // El valor de autoUpload viene de la configuración del usuario, no del input data
+        // Solo subimos automáticamente si el usuario lo tiene habilitado en configuración
+        val autoUpload = userSettings.autoUpload
+
+        Log.d(TAG, "User settings - autoUpload: $autoUpload, wifiOnly: ${userSettings.wifiOnly}, autoSyncEnabled: ${userSettings.autoSyncEnabled}")
+
+        // Si el usuario deshabilitó la sincronización automática, salir sin hacer nada
+        if (!userSettings.autoSyncEnabled) {
+            Log.d(TAG, "Auto sync is disabled by user, skipping")
+            return Result.success(workDataOf(
+                KEY_STATUS to "skipped",
+                KEY_TOTAL to 0
+            ))
+        }
 
         return try {
             // Iniciar como servicio en primer plano para mostrar notificaciones
@@ -345,9 +368,19 @@ class SyncWorker @AssistedInject constructor(
                                     context = applicationContext,
                                     progressPercent = percent
                                 )
+                                // Actualizar progreso del Worker para la UI
+                                setProgress(workDataOf(
+                                    KEY_PROGRESS to percent,
+                                    KEY_STATUS to "starting"
+                                ))
                             }
                             progress < 0.5f -> {
                                 SyncNotificationHelper.showCheckingServerNotification(applicationContext)
+                                // Actualizar progreso del Worker para la UI
+                                setProgress(workDataOf(
+                                    KEY_PROGRESS to percent,
+                                    KEY_STATUS to "syncing"
+                                ))
                             }
                         }
                     }
@@ -439,8 +472,9 @@ class SyncWorker @AssistedInject constructor(
                 if (localItems.isEmpty()) {
                     Result.success(workDataOf(KEY_STATUS to "completed", KEY_TOTAL to 0))
                 } else {
-                    val autoUpload = inputData.getBoolean(KEY_AUTO_UPLOAD, false)
-                    val result = syncRepository.syncBatch(localItems, autoUpload)
+                    // Leer configuración del usuario
+                    val fallbackSettings = syncSettingsManager.syncSettings.first()
+                    val result = syncRepository.syncBatch(localItems, fallbackSettings.autoUpload)
                     if (result.isSuccess) {
                         Result.success(workDataOf(KEY_STATUS to "completed"))
                     } else {

@@ -5,6 +5,7 @@ import androidx.work.ListenableWorker
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import com.example.galerio.data.local.dao.MediaItemDao
+import com.example.galerio.data.local.preferences.SyncSettingsManager
 import com.example.galerio.data.repository.CloudSyncRepository
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -25,7 +26,8 @@ import javax.inject.Singleton
 @Singleton
 class SyncWorkerFactory @Inject constructor(
     private val syncRepository: CloudSyncRepository,
-    private val mediaItemDao: MediaItemDao
+    private val mediaItemDao: MediaItemDao,
+    private val syncSettingsManager: SyncSettingsManager
 ) : WorkerFactory() {
 
     override fun createWorker(
@@ -39,7 +41,8 @@ class SyncWorkerFactory @Inject constructor(
                     appContext = appContext,
                     workerParams = workerParameters,
                     syncRepository = syncRepository,
-                    mediaItemDao = mediaItemDao
+                    mediaItemDao = mediaItemDao,
+                    syncSettingsManager = syncSettingsManager
                 )
             }
             else -> null // Delegar a la factory por defecto para otros workers
