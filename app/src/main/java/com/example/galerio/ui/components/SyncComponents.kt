@@ -225,13 +225,13 @@ private fun getPhaseTitle(phase: SyncPhase, status: SyncStatus): String {
 
 private fun getPhaseDescription(phase: SyncPhase, progress: Float, batchSyncState: BatchSyncState = BatchSyncState()): String {
     return when (phase) {
-        SyncPhase.CALCULATING_HASHES -> "Calculando hashes de los archivos locales..."
+        SyncPhase.CALCULATING_HASHES -> "Preparando archivos..."
         SyncPhase.CHECKING_SERVER -> "Comparando con archivos en la nube..."
         SyncPhase.UPLOADING -> {
             if (batchSyncState.totalToUpload > 0) {
                 "Subiendo ${batchSyncState.currentUploadIndex} de ${batchSyncState.totalToUpload} archivos..."
             } else {
-                "Subiendo archivos nuevos al servidor..."
+                "Subiendo archivos nuevos a la nube..."
             }
         }
         SyncPhase.COMPLETED -> "Sincronización finalizada"
@@ -345,12 +345,7 @@ fun SyncStatusCard(
                     onClick = onSyncClick,
                     enabled = !isSyncing
                 ) {
-                    if (isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
+                    if (!isSyncing) {
                         Icon(
                             imageVector = Icons.Default.Sync,
                             contentDescription = "Sincronizar"

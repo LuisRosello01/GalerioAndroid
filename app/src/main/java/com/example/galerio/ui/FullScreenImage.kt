@@ -260,21 +260,21 @@ fun FullScreenImage(
         }
 
         // Mensaje de éxito
-        AnimatedVisibility(
-            visible = showSuccessMessage,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp)
-        ) {
-            Snackbar(
-                containerColor = Color(0xFF4CAF50),
-                contentColor = Color.White
-            ) {
-                Text("✓ Imagen subida correctamente")
-            }
-        }
+        //AnimatedVisibility(
+        //    visible = showSuccessMessage,
+        //    enter = fadeIn(),
+        //    exit = fadeOut(),
+        //    modifier = Modifier
+        //        .align(Alignment.BottomCenter)
+        //        .padding(16.dp)
+        //) {
+        //    Snackbar(
+        //        containerColor = Color(0xFF4CAF50),
+        //        contentColor = Color.White
+        //    ) {
+        //        Text("✓ Imagen subida correctamente")
+        //    }
+        //}
     }
 
     // Lanzar la animación de zoom-in al entrar en la pantalla

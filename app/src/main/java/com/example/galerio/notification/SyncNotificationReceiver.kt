@@ -36,10 +36,20 @@ class SyncNotificationReceiver : BroadcastReceiver() {
                 // Cancelar la sincronización en el repositorio
                 syncRepository.cancelSync()
 
-                // Cancelar el Worker de sincronización (one-time y periodic running)
+                // Cancelar todos los Workers de sincronización activos
                 val workManager = WorkManager.getInstance(context)
+
+                // Cancelar trabajo único (sync now)
                 workManager.cancelUniqueWork(SyncWorker.ONE_TIME_WORK_NAME)
                 Log.d(TAG, "Cancelled one-time sync worker")
+
+                // Cancelar por tags también para asegurar que se cancele cualquier trabajo activo
+                workManager.cancelAllWorkByTag(SyncWorker.WORK_NAME)
+                workManager.cancelAllWorkByTag(SyncWorker.ONE_TIME_WORK_NAME)
+                Log.d(TAG, "Cancelled all sync workers by tag")
+
+                // Cancelar la notificación de progreso
+                SyncNotificationHelper.cancelProgressNotification(context)
 
                 // Mostrar notificación de cancelado
                 SyncNotificationHelper.showSyncCancelledNotification(context)

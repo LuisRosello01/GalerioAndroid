@@ -121,9 +121,9 @@ class GalerioApplication : Application(), ImageLoaderFactory, Configuration.Prov
         )
 
         getSharedPreferences(SYNC_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putBoolean(KEY_PERIODIC_SYNC_SCHEDULED, true)
-            .apply()
+            .edit {
+                putBoolean(KEY_PERIODIC_SYNC_SCHEDULED, true)
+            }
     }
 
     /**

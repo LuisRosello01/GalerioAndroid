@@ -77,12 +77,14 @@ class SyncWorker @AssistedInject constructor(
 
         /**
          * Programa la sincronización periódica en background
+         * @param initialDelayHours Retraso inicial antes de la primera ejecución (por defecto igual al intervalo)
          */
         fun schedulePeriodicSync(
             context: Context,
             intervalHours: Long = DEFAULT_SYNC_INTERVAL_HOURS,
             autoUpload: Boolean = true,
-            wifiOnly: Boolean = true
+            wifiOnly: Boolean = true,
+            initialDelayHours: Long = intervalHours // Por defecto, esperar el intervalo completo
         ) {
             val networkType = if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED
             val constraints = Constraints.Builder()
@@ -95,6 +97,7 @@ class SyncWorker @AssistedInject constructor(
                 intervalHours, TimeUnit.HOURS
             )
                 .setConstraints(constraints)
+                .setInitialDelay(initialDelayHours, TimeUnit.HOURS) // Evitar ejecución inmediata
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
                     1, TimeUnit.MINUTES // Backoff conservador para operaciones de red
@@ -110,7 +113,7 @@ class SyncWorker @AssistedInject constructor(
                 syncRequest
             )
 
-            Log.d(TAG, "Scheduled periodic sync every $intervalHours hours (wifiOnly=$wifiOnly, autoUpload=$autoUpload)")
+            Log.d(TAG, "Scheduled periodic sync every $intervalHours hours with initial delay of $initialDelayHours hours (wifiOnly=$wifiOnly, autoUpload=$autoUpload)")
         }
 
         /**
@@ -341,15 +344,16 @@ class SyncWorker @AssistedInject constructor(
                 val progressJob = launch {
                     syncRepository.uploadProgressInfo.collect { progressInfo ->
                         if (progressInfo.totalCount > 0) {
+                            // Progreso de 0% a 100% para la fase de upload
                             val percent = ((progressInfo.currentIndex.toFloat() / progressInfo.totalCount) * 100).toInt()
                             SyncNotificationHelper.showUploadProgressNotification(
                                 context = applicationContext,
                                 currentFile = progressInfo.currentIndex,
                                 totalFiles = progressInfo.totalCount,
-                                progressPercent = 50 + (percent / 2) // 50-100%
+                                progressPercent = percent // 0-100% para uploads
                             )
                             setProgress(workDataOf(
-                                KEY_PROGRESS to (50 + percent / 2),
+                                KEY_PROGRESS to percent,
                                 KEY_STATUS to "uploading",
                                 KEY_UPLOADED to progressInfo.currentIndex,
                                 KEY_TOTAL to progressInfo.totalCount
@@ -358,29 +362,27 @@ class SyncWorker @AssistedInject constructor(
                     }
                 }
 
-                // Job para observar progreso general
+                // Job para observar progreso general (fase de hashing)
                 val syncProgressJob = launch {
                     syncRepository.syncProgress.collect { progress ->
-                        val percent = (progress * 100).toInt()
+                        // El repositorio reporta 0-0.4 para hashes, convertir a 0-100%
                         when {
                             progress < 0.4f -> {
+                                // Fase de hashing: convertir 0-0.4 a 0-100%
+                                val hashingPercent = ((progress / 0.4f) * 100).toInt().coerceIn(0, 100)
                                 SyncNotificationHelper.showHashingProgressNotification(
                                     context = applicationContext,
-                                    progressPercent = percent
+                                    progressPercent = hashingPercent
                                 )
                                 // Actualizar progreso del Worker para la UI
                                 setProgress(workDataOf(
-                                    KEY_PROGRESS to percent,
+                                    KEY_PROGRESS to hashingPercent,
                                     KEY_STATUS to "starting"
                                 ))
                             }
                             progress < 0.5f -> {
-                                SyncNotificationHelper.showCheckingServerNotification(applicationContext)
-                                // Actualizar progreso del Worker para la UI
-                                setProgress(workDataOf(
-                                    KEY_PROGRESS to percent,
-                                    KEY_STATUS to "syncing"
-                                ))
+                                // Fase de verificación con servidor - no mostrar barra
+                                // (la UI ya no muestra nada durante esta fase)
                             }
                         }
                     }

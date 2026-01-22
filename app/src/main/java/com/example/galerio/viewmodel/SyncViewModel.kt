@@ -130,30 +130,38 @@ class SyncViewModel @Inject constructor(
 
         viewModelScope.launch {
             syncRepository.syncProgress.collect { progress ->
-                _syncProgress.value = progress
-
                 // Estimar fase basándose en el progreso
                 val currentState = _batchSyncState.value
-                if (currentState.isActive) {
+                if (currentState.isActive && !currentState.isBackgroundSync) {
                     val newPhase = when {
-                        progress < 0.3f -> SyncPhase.CALCULATING_HASHES
+                        progress < 0.4f -> SyncPhase.CALCULATING_HASHES
                         progress < 0.5f -> SyncPhase.CHECKING_SERVER
                         progress < 1f -> SyncPhase.UPLOADING
                         else -> SyncPhase.COMPLETED
                     }
+
+                    // Transformar progreso para que sea 0-1 (0%-100%) en cada fase
+                    val normalizedProgress = when (newPhase) {
+                        SyncPhase.CALCULATING_HASHES -> (progress / 0.4f).coerceIn(0f, 1f)
+                        SyncPhase.CHECKING_SERVER -> 0f // No mostrar progreso
+                        SyncPhase.UPLOADING -> ((progress - 0.5f) / 0.5f).coerceIn(0f, 1f)
+                        else -> progress
+                    }
+
+                    _syncProgress.value = normalizedProgress
                     _batchSyncState.value = currentState.copy(currentPhase = newPhase)
 
-                    // Mostrar notificaciones de progreso
-                    val percent = (progress * 100).toInt()
+                    // Mostrar notificaciones de progreso (solo para sync manual, no background)
                     when (newPhase) {
                         SyncPhase.CALCULATING_HASHES -> {
+                            val hashingPercent = (normalizedProgress * 100).toInt()
                             SyncNotificationHelper.showHashingProgressNotification(
                                 context = context,
-                                progressPercent = percent
+                                progressPercent = hashingPercent
                             )
                         }
                         SyncPhase.CHECKING_SERVER -> {
-                            SyncNotificationHelper.showCheckingServerNotification(context)
+                            // No mostrar notificación durante verificación con servidor
                         }
                         else -> { /* Upload notifications are handled in uploadProgressInfo collector */ }
                     }
@@ -165,19 +173,23 @@ class SyncViewModel @Inject constructor(
         viewModelScope.launch {
             syncRepository.uploadProgressInfo.collect { progressInfo ->
                 val currentState = _batchSyncState.value
-                if (currentState.isActive && progressInfo.totalCount > 0) {
+                if (currentState.isActive && progressInfo.totalCount > 0 && !currentState.isBackgroundSync) {
+                    // Calcular progreso normalizado (0-1)
+                    val normalizedProgress = (progressInfo.currentIndex.toFloat() / progressInfo.totalCount).coerceIn(0f, 1f)
+
+                    _syncProgress.value = normalizedProgress
                     _batchSyncState.value = currentState.copy(
                         currentUploadIndex = progressInfo.currentIndex,
                         totalToUpload = progressInfo.totalCount
                     )
 
-                    // Mostrar notificación de progreso de subida
-                    val percent = ((progressInfo.currentIndex.toFloat() / progressInfo.totalCount) * 100).toInt()
+                    // Mostrar notificación de progreso de subida (0-100%)
+                    val percent = (normalizedProgress * 100).toInt()
                     SyncNotificationHelper.showUploadProgressNotification(
                         context = context,
                         currentFile = progressInfo.currentIndex,
                         totalFiles = progressInfo.totalCount,
-                        progressPercent = 50 + (percent / 2) // 50-100% para fase de uploads
+                        progressPercent = percent // 0-100% para fase de uploads
                     )
                 }
             }
@@ -313,27 +325,25 @@ class SyncViewModel @Inject constructor(
             WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
                 // Siempre resetear el estado cuando el Worker falla o es cancelado
                 val wasCancelled = workInfo.state == WorkInfo.State.CANCELLED
-                val wasBackgroundSync = _batchSyncState.value.isBackgroundSync
-                val wasRunning = _backgroundSyncState.value.isRunning || _batchSyncState.value.isActive
 
-                if (wasBackgroundSync || wasRunning) {
-                    Log.d(TAG, "Worker ${if (wasCancelled) "cancelled" else "failed"} - resetting UI state")
+                Log.d(TAG, "Worker ${if (wasCancelled) "cancelled" else "failed"} - resetting UI state")
+                Log.d(TAG, "Current state: isActive=${_batchSyncState.value.isActive}, isBackgroundSync=${_batchSyncState.value.isBackgroundSync}, isRunning=${_backgroundSyncState.value.isRunning}")
 
-                    _backgroundSyncState.value = BackgroundSyncState(isRunning = false)
-                    _batchSyncState.value = BatchSyncState(
-                        isActive = false,
-                        isBackgroundSync = false,
-                        currentPhase = if (wasCancelled) SyncPhase.CANCELLED else SyncPhase.ERROR
-                    )
-                    _isSyncing.value = false
-                    _syncProgress.value = 0f
+                // Resetear todos los estados de sincronización
+                _backgroundSyncState.value = BackgroundSyncState(isRunning = false)
+                _batchSyncState.value = BatchSyncState(
+                    isActive = false,
+                    isBackgroundSync = false,
+                    currentPhase = if (wasCancelled) SyncPhase.CANCELLED else SyncPhase.ERROR
+                )
+                _isSyncing.value = false
+                _syncProgress.value = 0f
 
-                    // Mostrar mensaje al usuario
-                    if (wasCancelled) {
-                        _successMessage.value = "Sincronización en segundo plano cancelada"
-                    } else {
-                        _error.value = "Error en la sincronización en segundo plano"
-                    }
+                // Mostrar mensaje al usuario
+                if (wasCancelled) {
+                    _successMessage.value = "Sincronización cancelada"
+                } else {
+                    _error.value = "Error en la sincronización"
                 }
             }
             else -> {

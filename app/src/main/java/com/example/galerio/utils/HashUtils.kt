@@ -90,16 +90,24 @@ object HashUtils {
      * @param contentResolver ContentResolver para acceder a los archivos
      * @param uris Lista de URIs a procesar
      * @param onProgress Callback para reportar progreso (0.0 a 1.0)
+     * @param isCancelled Función para verificar si se debe cancelar el cálculo
      * @return Mapa de URI string -> hash
      */
     suspend fun calculateHashesForUris(
         contentResolver: ContentResolver,
         uris: List<Uri>,
-        onProgress: ((Float) -> Unit)? = null
+        onProgress: ((Float) -> Unit)? = null,
+        isCancelled: (() -> Boolean)? = null
     ): Map<String, String> = withContext(Dispatchers.IO) {
         val result = mutableMapOf<String, String>()
 
-        uris.forEachIndexed { index, uri ->
+        for ((index, uri) in uris.withIndex()) {
+            // Verificar cancelación antes de cada archivo
+            if (isCancelled?.invoke() == true) {
+                android.util.Log.d("HashUtils", "Hash calculation cancelled at $index/${uris.size}")
+                break
+            }
+
             val hash = calculateSHA256(contentResolver, uri)
             if (hash != null) {
                 result[uri.toString()] = hash

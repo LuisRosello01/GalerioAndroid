@@ -227,20 +227,20 @@ fun VideoPlayerScreen(
         }
 
         // Mensaje de éxito
-        AnimatedVisibility(
-            visible = showSuccessMessage,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp)
-        ) {
-            Snackbar(
-                containerColor = Color(0xFF4CAF50),
-                contentColor = Color.White
-            ) {
-                Text("✓ Video subido correctamente")
-            }
-        }
+        //AnimatedVisibility(
+        //    visible = showSuccessMessage,
+        //    enter = fadeIn(),
+        //    exit = fadeOut(),
+        //    modifier = Modifier
+        //        .align(Alignment.BottomCenter)
+        //        .padding(16.dp)
+        //) {
+        //    Snackbar(
+        //        containerColor = Color(0xFF4CAF50),
+        //        contentColor = Color.White
+        //    ) {
+        //        Text("✓ Video subido correctamente")
+        //    }
+        //}
     }
 }

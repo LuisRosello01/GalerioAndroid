@@ -424,6 +424,9 @@ class CloudSyncRepository @Inject constructor(
         localMediaItems: List<MediaItem>,
         autoUpload: Boolean = false
     ): Result<BatchSyncResult> = withContext(Dispatchers.IO) {
+        // Resetear flag de cancelación al inicio de una nueva sincronización
+        isCancelled = false
+
         try {
             Log.d(TAG, "[BATCH_SYNC] Starting batch sync for ${localMediaItems.size} items")
 
@@ -436,6 +439,16 @@ class CloudSyncRepository @Inject constructor(
             val token = authManager.getToken() ?: return@withContext Result.failure(Exception("No auth token"))
 
             _syncStatus.value = SyncStatus.PENDING
+
+            // Verificar cancelación antes de continuar
+            if (isCancelled) {
+                Log.d(TAG, "[BATCH_SYNC] Cancelled before getting synced items")
+                return@withContext Result.success(BatchSyncResult(
+                    alreadySynced = emptyMap(),
+                    needsUpload = emptyList(),
+                    wasCancelled = true
+                ))
+            }
 
             // 0. Obtener URIs sincronizados localmente para referencia
             Log.d(TAG, "[BATCH_SYNC] Step 0: Getting locally synced items for reference...")
@@ -472,7 +485,18 @@ class CloudSyncRepository @Inject constructor(
             val urisNeedingHash = uriStrings.filter { it !in urisWithHash }
             Log.d(TAG, "[BATCH_SYNC] Need to calculate hash for ${urisNeedingHash.size} items")
 
-            // 1c. Calcular hashes solo para los que faltan
+            // Verificar cancelación antes de calcular hashes (operación costosa)
+            if (isCancelled) {
+                Log.d(TAG, "[BATCH_SYNC] Cancelled before calculating hashes")
+                _syncStatus.value = SyncStatus.PENDING
+                return@withContext Result.success(BatchSyncResult(
+                    alreadySynced = emptyMap(),
+                    needsUpload = emptyList(),
+                    wasCancelled = true
+                ))
+            }
+
+            // 1e. Calcular hashes solo para los que faltan
             val newlyCalculatedHashes = if (urisNeedingHash.isNotEmpty()) {
                 val urisToCalculate = urisNeedingHash.mapNotNull {
                     try {
@@ -488,8 +512,20 @@ class CloudSyncRepository @Inject constructor(
                     uris = urisToCalculate,
                     onProgress = { progress ->
                         _syncProgress.value = progress * 0.4f // 0-40% para cálculo de hashes
-                    }
+                    },
+                    isCancelled = { isCancelled } // Pasar función para verificar cancelación
                 )
+
+                // Verificar si fue cancelado durante el cálculo
+                if (isCancelled) {
+                    Log.d(TAG, "[BATCH_SYNC] Cancelled during hash calculation")
+                    _syncStatus.value = SyncStatus.PENDING
+                    return@withContext Result.success(BatchSyncResult(
+                        alreadySynced = emptyMap(),
+                        needsUpload = emptyList(),
+                        wasCancelled = true
+                    ))
+                }
 
                 // Guardar los nuevos hashes en la BD para futuras sincronizaciones
                 if (calculated.isNotEmpty()) {
@@ -516,6 +552,17 @@ class CloudSyncRepository @Inject constructor(
                 return@withContext Result.success(BatchSyncResult(
                     alreadySynced = emptyMap(),
                     needsUpload = emptyList()
+                ))
+            }
+
+            // Verificar cancelación antes de enviar al servidor
+            if (isCancelled) {
+                Log.d(TAG, "[BATCH_SYNC] Cancelled before sending hashes to server")
+                _syncStatus.value = SyncStatus.PENDING
+                return@withContext Result.success(BatchSyncResult(
+                    alreadySynced = emptyMap(),
+                    needsUpload = emptyList(),
+                    wasCancelled = true
                 ))
             }
 
@@ -547,6 +594,17 @@ class CloudSyncRepository @Inject constructor(
                 Log.d(TAG, "[BATCH_SYNC] Filters: requested=${syncResponse.filters.syncRequested}, matched=${syncResponse.filters.syncMatched}, pending=${syncResponse.filters.syncPending}")
             }
 
+            // Verificar cancelación después de recibir respuesta del servidor
+            if (isCancelled) {
+                Log.d(TAG, "[BATCH_SYNC] Cancelled after server response")
+                _syncStatus.value = SyncStatus.PENDING
+                return@withContext Result.success(BatchSyncResult(
+                    alreadySynced = alreadySyncedFromServer,
+                    needsUpload = needsUpload,
+                    wasCancelled = true
+                ))
+            }
+
             // 3. Limpiar registros de sincronización obsoletos
             // Si el servidor dice que un archivo necesita subirse, significa que ya no existe en el servidor
             // Por lo tanto, debemos eliminar el registro de sincronización local si existe
@@ -564,34 +622,32 @@ class CloudSyncRepository @Inject constructor(
             // 5. Subir archivos pendientes si autoUpload está habilitado
             var uploadedCount = 0
             var failedCount = 0
-            var wasCancelled = false
+            var wasCancelled = isCancelled // Verificar si ya está cancelado
 
             if (autoUpload && needsUpload.isNotEmpty() && !isCancelled) {
                 Log.d(TAG, "[BATCH_SYNC] Step 5: Auto-uploading ${needsUpload.size} pending files...")
                 val uploadResult = uploadPendingMedia(needsUpload, itemsToCheck, hashesMap)
                 uploadedCount = uploadResult.uploadedCount
                 failedCount = uploadResult.failedCount
-                wasCancelled = uploadResult.wasCancelled
+                wasCancelled = uploadResult.wasCancelled || isCancelled
             }
 
-            // Resetear flag de cancelación para la próxima sincronización
-            isCancelled = false
-
-            _syncStatus.value = if (wasCancelled) SyncStatus.PENDING else SyncStatus.SYNCED
+            _syncStatus.value = if (wasCancelled || isCancelled) SyncStatus.PENDING else SyncStatus.SYNCED
             _syncProgress.value = 1f
 
             // Combinar items sincronizados localmente (por conteo) + items sincronizados desde servidor
             // alreadySyncedFromServer ya contiene los nuevos, alreadySyncedCount tiene los previos
             val totalSyncedCount = alreadySyncedCount + alreadySyncedFromServer.size
 
-            Log.d(TAG, "[BATCH_SYNC] Sync completed - locally synced: $alreadySyncedCount, server synced: ${alreadySyncedFromServer.size}, total: $totalSyncedCount, uploaded: $uploadedCount, failed: $failedCount, cancelled: $wasCancelled")
+            val finalWasCancelled = wasCancelled || isCancelled
+            Log.d(TAG, "[BATCH_SYNC] Sync completed - locally synced: $alreadySyncedCount, server synced: ${alreadySyncedFromServer.size}, total: $totalSyncedCount, uploaded: $uploadedCount, failed: $failedCount, cancelled: $finalWasCancelled")
 
             Result.success(BatchSyncResult(
                 alreadySynced = alreadySyncedFromServer, // Solo reportamos los nuevos sincronizados en esta sesión
                 needsUpload = needsUpload,
                 uploadedCount = uploadedCount,
                 failedCount = failedCount,
-                wasCancelled = wasCancelled
+                wasCancelled = finalWasCancelled
             ))
 
         } catch (e: Exception) {
