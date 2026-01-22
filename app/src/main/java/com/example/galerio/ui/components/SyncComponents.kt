@@ -39,9 +39,9 @@ fun SyncProgressIndicator(
     onCancelClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    // Solo mostrar cuando está activamente sincronizando (no en estados terminales)
+    // Solo mostrar en fases con progreso visible: cálculo de hashes y subida
+    // NO mostrar durante CHECKING_SERVER (es muy rápido y no tiene barra de progreso útil)
     val isActivePhase = phase == SyncPhase.CALCULATING_HASHES ||
-            phase == SyncPhase.CHECKING_SERVER ||
             phase == SyncPhase.UPLOADING
 
     val isActiveStatus = status == SyncStatus.UPLOADING ||
@@ -54,9 +54,12 @@ fun SyncProgressIndicator(
             phase == SyncPhase.COMPLETED ||
             phase == SyncPhase.IDLE
 
-    // También mostrar si hay sincronización en background activa (y no está en estado terminal)
-    val showIndicator = ((isActivePhase && isActiveStatus) ||
-            (batchSyncState.isBackgroundSync && batchSyncState.isActive)) && !isTerminalPhase
+    // También mostrar si hay sincronización en background activa (y no está en estado terminal ni en CHECKING_SERVER)
+    val isBackgroundActive = batchSyncState.isBackgroundSync &&
+            batchSyncState.isActive &&
+            phase != SyncPhase.CHECKING_SERVER
+
+    val showIndicator = ((isActivePhase && isActiveStatus) || isBackgroundActive) && !isTerminalPhase
 
     AnimatedVisibility(
         visible = showIndicator,
