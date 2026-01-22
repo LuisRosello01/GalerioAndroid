@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import com.example.galerio.GalerioApplication
 import com.example.galerio.data.local.preferences.SyncSettingsManager
 import com.example.galerio.data.model.MediaItem
 import com.example.galerio.data.model.cloud.SyncStatus
@@ -31,7 +34,20 @@ data class BatchSyncState(
     val failedCount: Int = 0,
     val totalSyncedCount: Int = 0,
     val currentUploadIndex: Int = 0,
-    val totalToUpload: Int = 0
+    val totalToUpload: Int = 0,
+    val isBackgroundSync: Boolean = false // true si es sincronización del Worker en background
+)
+
+/**
+ * Estado del Worker de sincronización en background
+ */
+data class BackgroundSyncState(
+    val isRunning: Boolean = false,
+    val progress: Int = 0,
+    val status: String = "",
+    val uploadedCount: Int = 0,
+    val failedCount: Int = 0,
+    val totalCount: Int = 0
 )
 
 /**
@@ -82,6 +98,10 @@ class SyncViewModel @Inject constructor(
     // Configuración de sincronización
     private val _syncSettings = MutableStateFlow(SyncSettingsManager.SyncSettings())
     val syncSettings: StateFlow<SyncSettingsManager.SyncSettings> = _syncSettings.asStateFlow()
+
+    // Estado del Worker en background
+    private val _backgroundSyncState = MutableStateFlow(BackgroundSyncState())
+    val backgroundSyncState: StateFlow<BackgroundSyncState> = _backgroundSyncState.asStateFlow()
 
     // Lista de items pendientes de subir (para reintento manual)
     private var pendingUploadItems: List<MediaItem> = emptyList()
@@ -176,12 +196,159 @@ class SyncViewModel @Inject constructor(
         viewModelScope.launch {
             loadSyncedCount()
         }
+
+        // Observar el estado del Worker en background
+        observeBackgroundWorker()
+    }
+
+    /**
+     * Observa el estado del Worker de sincronización en background
+     * y actualiza la UI cuando está sincronizando
+     */
+    private fun observeBackgroundWorker() {
+        val workManager = WorkManager.getInstance(context)
+
+        // Observar trabajo periódico
+        viewModelScope.launch {
+            workManager.getWorkInfosForUniqueWorkFlow(SyncWorker.WORK_NAME)
+                .collect { workInfos ->
+                    handleWorkerInfoUpdate(workInfos)
+                }
+        }
+
+        // Observar trabajo único (sync now)
+        viewModelScope.launch {
+            workManager.getWorkInfosForUniqueWorkFlow(SyncWorker.ONE_TIME_WORK_NAME)
+                .collect { workInfos ->
+                    handleWorkerInfoUpdate(workInfos)
+                }
+        }
+    }
+
+    /**
+     * Procesa las actualizaciones del WorkInfo y actualiza el estado de la UI
+     */
+    private fun handleWorkerInfoUpdate(workInfos: List<WorkInfo>) {
+        val workInfo = workInfos.firstOrNull() ?: return
+
+        when (workInfo.state) {
+            WorkInfo.State.RUNNING -> {
+                // Solo actualizar si no hay una sincronización manual activa
+                if (!_batchSyncState.value.isActive || _batchSyncState.value.isBackgroundSync) {
+                    val progress = workInfo.progress
+                    val progressPercent = progress.getInt(SyncWorker.KEY_PROGRESS, 0)
+                    val status = progress.getString(SyncWorker.KEY_STATUS) ?: ""
+                    val uploadedCount = progress.getInt(SyncWorker.KEY_UPLOADED, 0)
+                    val failedCount = progress.getInt(SyncWorker.KEY_FAILED, 0)
+                    val totalCount = progress.getInt(SyncWorker.KEY_TOTAL, 0)
+
+                    _backgroundSyncState.value = BackgroundSyncState(
+                        isRunning = true,
+                        progress = progressPercent,
+                        status = status,
+                        uploadedCount = uploadedCount,
+                        failedCount = failedCount,
+                        totalCount = totalCount
+                    )
+
+                    // Reflejar en el estado de sincronización general
+                    _isSyncing.value = true
+                    _syncProgress.value = progressPercent / 100f
+
+                    // Actualizar el batchSyncState para que la UI muestre el progreso
+                    val phase = when {
+                        status == "starting" -> SyncPhase.CALCULATING_HASHES
+                        status == "syncing" -> SyncPhase.CHECKING_SERVER
+                        status == "uploading" -> SyncPhase.UPLOADING
+                        else -> SyncPhase.CALCULATING_HASHES
+                    }
+                    _batchSyncState.value = BatchSyncState(
+                        isActive = true,
+                        isBackgroundSync = true,
+                        currentPhase = phase,
+                        uploadedCount = uploadedCount,
+                        failedCount = failedCount,
+                        totalToUpload = totalCount,
+                        currentUploadIndex = uploadedCount
+                    )
+                }
+            }
+            WorkInfo.State.SUCCEEDED -> {
+                // Si es sincronización de background, actualizar estado
+                if (_batchSyncState.value.isBackgroundSync) {
+                    val output = workInfo.outputData
+                    val uploadedCount = output.getInt(SyncWorker.KEY_UPLOADED, 0)
+                    val failedCount = output.getInt(SyncWorker.KEY_FAILED, 0)
+                    val totalCount = output.getInt(SyncWorker.KEY_TOTAL, 0)
+
+                    _backgroundSyncState.value = BackgroundSyncState(
+                        isRunning = false,
+                        progress = 100,
+                        status = "completed",
+                        uploadedCount = uploadedCount,
+                        failedCount = failedCount,
+                        totalCount = totalCount
+                    )
+
+                    _batchSyncState.value = BatchSyncState(
+                        isActive = false,
+                        isBackgroundSync = false,
+                        currentPhase = SyncPhase.COMPLETED,
+                        uploadedCount = uploadedCount,
+                        failedCount = failedCount,
+                        totalSyncedCount = totalCount
+                    )
+
+                    _isSyncing.value = false
+                    _syncProgress.value = 0f
+
+                    if (uploadedCount > 0 || totalCount > 0) {
+                        _successMessage.value = "Sincronización en segundo plano completada: $uploadedCount subidos"
+                    }
+
+                    // Refrescar conteo
+                    refreshSyncedCount()
+                }
+            }
+            WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
+                if (_batchSyncState.value.isBackgroundSync || _backgroundSyncState.value.isRunning) {
+                    val wasCancelled = workInfo.state == WorkInfo.State.CANCELLED
+
+                    _backgroundSyncState.value = BackgroundSyncState(isRunning = false)
+                    _batchSyncState.value = BatchSyncState(
+                        isActive = false,
+                        isBackgroundSync = false,
+                        currentPhase = if (wasCancelled) SyncPhase.CANCELLED else SyncPhase.ERROR
+                    )
+                    _isSyncing.value = false
+                    _syncProgress.value = 0f
+
+                    // Mostrar mensaje al usuario
+                    if (wasCancelled) {
+                        _successMessage.value = "Sincronización en segundo plano cancelada"
+                    } else {
+                        _error.value = "Error en la sincronización en segundo plano"
+                    }
+                }
+            }
+            else -> {
+                // ENQUEUED, BLOCKED - no hacer nada
+            }
+        }
     }
 
     /**
      * Actualiza la programación de sincronización en background
+     * Solo programa si la primera sincronización manual ya fue completada
      */
     private fun updateBackgroundSyncSchedule(settings: SyncSettingsManager.SyncSettings) {
+        // Verificar si la primera sincronización manual ya fue completada
+        val app = context.applicationContext as? GalerioApplication
+        if (app?.isFirstSyncCompleted() != true) {
+            Log.d(TAG, "Background sync not scheduled - waiting for first manual sync")
+            return
+        }
+
         if (settings.autoSyncEnabled) {
             SyncWorker.schedulePeriodicSync(
                 context = context,
@@ -272,6 +439,13 @@ class SyncViewModel @Inject constructor(
 
                     val message = buildSyncResultMessage(result)
                     _successMessage.value = message
+
+                    // Marcar que la primera sincronización manual fue completada
+                    // Esto habilita la sincronización periódica automática
+                    if (!result.wasCancelled) {
+                        val app = context.applicationContext as? GalerioApplication
+                        app?.markFirstSyncCompleted()
+                    }
                 }
                 .onFailure { exception ->
                     _error.value = exception.message ?: "Batch sync failed"

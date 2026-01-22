@@ -5,6 +5,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.hilt.work.HiltWorker
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -18,6 +19,8 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.example.galerio.R
@@ -40,12 +43,14 @@ import java.util.concurrent.TimeUnit
  * - Reporta progreso para notificaciones
  * - Reintentos automáticos con backoff exponencial
  *
- * Nota: Usa SyncWorkerFactory para la inyección de dependencias
- * en lugar de @HiltWorker debido a incompatibilidades con KSP.
+ * Usa @HiltWorker con @AssistedInject para inyección de dependencias.
+ * Context y WorkerParameters son inyectados por WorkManager (Assisted).
+ * Otras dependencias son inyectadas por Hilt.
  */
-class SyncWorker(
-    appContext: Context,
-    workerParams: WorkerParameters,
+@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted appContext: Context,
+    @Assisted workerParams: WorkerParameters,
     private val syncRepository: CloudSyncRepository,
     private val mediaItemDao: MediaItemDao
 ) : CoroutineWorker(appContext, workerParams) {
@@ -79,6 +84,7 @@ class SyncWorker(
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.UNMETERED) // Solo WiFi
                 .setRequiresBatteryNotLow(true)
+                .setRequiresStorageNotLow(true) // Evitar sincronizar si hay poco almacenamiento
                 .build()
 
             val syncRequest = PeriodicWorkRequestBuilder<SyncWorker>(
@@ -87,7 +93,7 @@ class SyncWorker(
                 .setConstraints(constraints)
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL,
-                    30, TimeUnit.SECONDS
+                    1, TimeUnit.MINUTES // Backoff conservador para operaciones de red
                 )
                 .setInputData(workDataOf(KEY_AUTO_UPLOAD to autoUpload))
                 .addTag(WORK_NAME)
@@ -113,6 +119,13 @@ class SyncWorker(
             val syncRequest = OneTimeWorkRequestBuilder<SyncWorker>()
                 .setConstraints(constraints)
                 .setInputData(workDataOf(KEY_AUTO_UPLOAD to autoUpload))
+                // Usar setExpedited para Android 12+ con política de fallback
+                // Si el sistema no puede ejecutar inmediatamente, se ejecutará como trabajo normal
+                .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL,
+                    1, TimeUnit.MINUTES // Backoff más conservador para operaciones de red
+                )
                 .addTag(ONE_TIME_WORK_NAME)
                 .build()
 
@@ -280,6 +293,16 @@ class SyncWorker(
 
             Log.d(TAG, "Found ${localItems.size} local items to sync")
 
+            // Verificar cancelación cooperativa antes de continuar
+            if (isStopped) {
+                Log.d(TAG, "Worker stopped before sync started")
+                SyncNotificationHelper.cancelProgressNotification(applicationContext)
+                return Result.success(workDataOf(
+                    KEY_STATUS to "stopped",
+                    KEY_TOTAL to 0
+                ))
+            }
+
             if (localItems.isEmpty()) {
                 Log.d(TAG, "No local items to sync")
                 SyncNotificationHelper.cancelProgressNotification(applicationContext)
@@ -399,10 +422,12 @@ class SyncWorker(
                 }
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
-            // Worker fue cancelado - no reintentar
+            // Worker fue cancelado - limpiar y re-lanzar para cancelación cooperativa
             Log.w(TAG, "Sync worker cancelled: ${e.message}")
             SyncNotificationHelper.showSyncCancelledNotification(applicationContext)
-            Result.failure(workDataOf(KEY_STATUS to "cancelled"))
+            // IMPORTANTE: Re-lanzar CancellationException para mantener la cancelación cooperativa
+            // de coroutines. No hacer esto puede causar memory leaks.
+            throw e
         } catch (e: IllegalStateException) {
             // Puede ocurrir si setForeground falla (ej: app en background en Android 12+)
             Log.e(TAG, "Foreground error: ${e.message}")

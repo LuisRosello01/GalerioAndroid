@@ -12,9 +12,16 @@ import javax.inject.Singleton
 /**
  * Factory personalizada para crear SyncWorker con inyección de dependencias.
  *
- * Esta factory es necesaria porque @HiltWorker con KSP tiene problemas
- * para generar la AssistedFactory correctamente en algunas configuraciones.
+ * @deprecated Esta factory ya no es necesaria. Ahora usamos @HiltWorker con
+ * @AssistedInject directamente en SyncWorker. HiltWorkerFactory se encarga
+ * de la inyección automáticamente.
+ *
+ * Se mantiene temporalmente por compatibilidad pero se eliminará en futuras versiones.
  */
+@Deprecated(
+    message = "Usar @HiltWorker con HiltWorkerFactory. Esta clase será eliminada.",
+    level = DeprecationLevel.WARNING
+)
 @Singleton
 class SyncWorkerFactory @Inject constructor(
     private val syncRepository: CloudSyncRepository,

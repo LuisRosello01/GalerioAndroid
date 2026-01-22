@@ -48,8 +48,18 @@ fun SyncProgressIndicator(
             status == SyncStatus.PENDING ||
             status == SyncStatus.DOWNLOADING
 
+    // No mostrar si está en estado terminal (CANCELLED, ERROR, COMPLETED, IDLE)
+    val isTerminalPhase = phase == SyncPhase.CANCELLED ||
+            phase == SyncPhase.ERROR ||
+            phase == SyncPhase.COMPLETED ||
+            phase == SyncPhase.IDLE
+
+    // También mostrar si hay sincronización en background activa (y no está en estado terminal)
+    val showIndicator = ((isActivePhase && isActiveStatus) ||
+            (batchSyncState.isBackgroundSync && batchSyncState.isActive)) && !isTerminalPhase
+
     AnimatedVisibility(
-        visible = isActivePhase && isActiveStatus,
+        visible = showIndicator,
         enter = fadeIn() + slideInVertically(),
         exit = fadeOut() + slideOutVertically(),
         modifier = modifier
@@ -59,7 +69,10 @@ fun SyncProgressIndicator(
                 .fillMaxWidth()
                 .animateContentSize(),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer
+                containerColor = if (batchSyncState.isBackgroundSync)
+                    MaterialTheme.colorScheme.tertiaryContainer
+                else
+                    MaterialTheme.colorScheme.primaryContainer
             )
         ) {
             Column(
@@ -75,23 +88,39 @@ fun SyncProgressIndicator(
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         strokeWidth = 3.dp,
-                        color = MaterialTheme.colorScheme.primary
+                        color = if (batchSyncState.isBackgroundSync)
+                            MaterialTheme.colorScheme.tertiary
+                        else
+                            MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = getPhaseTitle(phase, status),
+                            text = if (batchSyncState.isBackgroundSync)
+                                "Sincronización en segundo plano"
+                            else
+                                getPhaseTitle(phase, status),
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            color = if (batchSyncState.isBackgroundSync)
+                                MaterialTheme.colorScheme.onTertiaryContainer
+                            else
+                                MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = getPhaseDescription(phase, progress, batchSyncState),
+                            text = if (batchSyncState.isBackgroundSync)
+                                getBackgroundSyncDescription(phase, batchSyncState)
+                            else
+                                getPhaseDescription(phase, progress, batchSyncState),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            color = (if (batchSyncState.isBackgroundSync)
+                                MaterialTheme.colorScheme.onTertiaryContainer
+                            else
+                                MaterialTheme.colorScheme.onPrimaryContainer).copy(alpha = 0.7f)
                         )
                     }
-                    // Botón de cancelar
-                    if (onCancelClick != null && (phase == SyncPhase.UPLOADING || phase == SyncPhase.CALCULATING_HASHES)) {
+                    // Botón de cancelar (no mostrar para sincronización en background)
+                    if (onCancelClick != null && !batchSyncState.isBackgroundSync &&
+                        (phase == SyncPhase.UPLOADING || phase == SyncPhase.CALCULATING_HASHES)) {
                         IconButton(
                             onClick = onCancelClick,
                             modifier = Modifier.size(32.dp)
@@ -113,7 +142,10 @@ fun SyncProgressIndicator(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(6.dp),
-                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                    trackColor = (if (batchSyncState.isBackgroundSync)
+                        MaterialTheme.colorScheme.tertiary
+                    else
+                        MaterialTheme.colorScheme.primary).copy(alpha = 0.2f)
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
@@ -128,7 +160,10 @@ fun SyncProgressIndicator(
                         Text(
                             text = "${batchSyncState.currentUploadIndex} de ${batchSyncState.totalToUpload} archivos",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                            color = (if (batchSyncState.isBackgroundSync)
+                                MaterialTheme.colorScheme.onTertiaryContainer
+                            else
+                                MaterialTheme.colorScheme.onPrimaryContainer).copy(alpha = 0.7f)
                         )
                     } else {
                         Spacer(modifier = Modifier.width(1.dp))
@@ -136,11 +171,35 @@ fun SyncProgressIndicator(
                     Text(
                         text = "${(progress * 100).toInt()}%",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                        color = (if (batchSyncState.isBackgroundSync)
+                            MaterialTheme.colorScheme.onTertiaryContainer
+                        else
+                            MaterialTheme.colorScheme.onPrimaryContainer).copy(alpha = 0.7f)
                     )
                 }
             }
         }
+    }
+}
+
+/**
+ * Descripción del progreso de sincronización en background
+ */
+private fun getBackgroundSyncDescription(phase: SyncPhase, batchSyncState: BatchSyncState): String {
+    return when (phase) {
+        SyncPhase.CALCULATING_HASHES -> "Analizando archivos locales..."
+        SyncPhase.CHECKING_SERVER -> "Verificando archivos en el servidor..."
+        SyncPhase.UPLOADING -> {
+            if (batchSyncState.totalToUpload > 0) {
+                "Subiendo ${batchSyncState.currentUploadIndex} de ${batchSyncState.totalToUpload} archivos..."
+            } else {
+                "Subiendo archivos..."
+            }
+        }
+        SyncPhase.COMPLETED -> "Sincronización completada"
+        SyncPhase.ERROR -> "Error en la sincronización"
+        SyncPhase.CANCELLED -> "Sincronización cancelada"
+        else -> "Sincronizando..."
     }
 }
 

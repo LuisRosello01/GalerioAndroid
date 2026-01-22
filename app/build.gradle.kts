@@ -121,6 +121,10 @@ dependencies {
     testImplementation("androidx.arch.core:core-testing:2.2.0")
     testImplementation(libs.robolectric)
 
+    // WorkManager Testing
+    testImplementation("androidx.work:work-testing:2.11.0")
+    androidTestImplementation("androidx.work:work-testing:2.11.0")
+
     // Hilt Testing
     testImplementation("com.google.dagger:hilt-android-testing:2.48")
     kspTest("com.google.dagger:hilt-android-compiler:2.48")
@@ -130,6 +134,7 @@ dependencies {
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
     androidTestImplementation("com.google.dagger:hilt-android-testing:2.48")
+    androidTestImplementation("com.google.truth:truth:1.1.5")
     kspAndroidTest("com.google.dagger:hilt-android-compiler:2.48")
 
     debugImplementation(libs.androidx.ui.tooling)
