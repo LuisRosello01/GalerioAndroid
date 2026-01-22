@@ -69,8 +69,12 @@ class AuthRepository @Inject constructor(
                         refreshToken = refreshToken
                     )
 
-                    // Guardar credenciales
-                    authManager.saveCredentials(user)
+                    // Obtener fechas de expiración
+                    val expiresAt = tokenInfo.expiresAt
+                    val refreshExpiresAt = tokenInfo.refreshExpiresAt
+
+                    // Guardar credenciales con fechas de expiración
+                    authManager.saveCredentials(user, expiresAt, refreshExpiresAt)
                     Log.d(TAG, "[LOGIN] Credentials saved successfully")
 
                     // Verificar que se guardó correctamente
