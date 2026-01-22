@@ -134,20 +134,26 @@ class AuthManager(private val context: Context) {
     }
 
     /**
-     * Verifica si el token de acceso está expirado o próximo a expirar
+     * Verifica si el token de acceso está expirado o próximo a expirar.
+     * Nota: expiresAt viene del servidor en segundos (Unix timestamp),
+     * por lo que se convierte a milisegundos para comparar con System.currentTimeMillis()
      */
     suspend fun isTokenExpired(): Boolean {
         val expiresAt = getTokenExpiresAt() ?: return false // Si no hay fecha, asumimos que no está expirado
-        val currentTime = System.currentTimeMillis()
-        return currentTime >= (expiresAt - TOKEN_EXPIRY_MARGIN_MS)
+        val currentTimeMs = System.currentTimeMillis()
+        val expiresAtMs = expiresAt * 1000L // Convertir segundos a milisegundos
+        return currentTimeMs >= (expiresAtMs - TOKEN_EXPIRY_MARGIN_MS)
     }
 
     /**
-     * Verifica si el refresh token está expirado
+     * Verifica si el refresh token está expirado.
+     * Nota: refreshExpiresAt viene del servidor en segundos (Unix timestamp)
      */
     suspend fun isRefreshTokenExpired(): Boolean {
         val expiresAt = getRefreshTokenExpiresAt() ?: return false
-        return System.currentTimeMillis() >= expiresAt
+        val currentTimeMs = System.currentTimeMillis()
+        val expiresAtMs = expiresAt * 1000L // Convertir segundos a milisegundos
+        return currentTimeMs >= expiresAtMs
     }
 
     /**
