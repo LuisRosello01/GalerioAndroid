@@ -13,6 +13,7 @@ import com.example.galerio.data.remote.adapter.DateTimeAdapter
 import com.example.galerio.data.remote.api.CloudApiService
 import com.example.galerio.data.remote.interceptor.AuthInterceptor
 import com.example.galerio.data.remote.interceptor.LoggingInterceptor
+import com.example.galerio.data.remote.interceptor.TokenAuthenticator
 import com.example.galerio.data.repository.AuthRepository
 import com.example.galerio.data.repository.CloudSyncRepository
 import com.example.galerio.data.repository.MediaRepository
@@ -35,6 +36,14 @@ import javax.inject.Singleton
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
 annotation class CoilOkHttpClient
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class RefreshTokenOkHttpClient
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class RefreshTokenApiService
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -142,13 +151,65 @@ object AppModule {
 
     @Provides
     @Singleton
+    @RefreshTokenOkHttpClient
+    fun provideRefreshTokenOkHttpClient(
+        loggingInterceptor: HttpLoggingInterceptor
+    ): OkHttpClient {
+        // Cliente HTTP básico sin autenticador para evitar ciclos en el refresh de tokens
+        return OkHttpClient.Builder()
+            .addInterceptor(loggingInterceptor)
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("X-Client-Type", "mobile-android")
+                        .build()
+                )
+            }
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    @RefreshTokenApiService
+    fun provideRefreshTokenApiService(
+        @RefreshTokenOkHttpClient okHttpClient: OkHttpClient,
+        gson: Gson
+    ): CloudApiService {
+        return Retrofit.Builder()
+            .baseUrl(CloudApiService.BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+            .create(CloudApiService::class.java)
+    }
+
+    @Provides
+    @Singleton
+    fun provideTokenAuthenticator(
+        authManager: AuthManager,
+        deviceInfoProvider: DeviceInfoProvider,
+        @RefreshTokenApiService refreshApiService: CloudApiService
+    ): TokenAuthenticator {
+        return TokenAuthenticator(
+            authManager = authManager,
+            apiServiceProvider = { refreshApiService },
+            deviceInfoProvider = deviceInfoProvider
+        )
+    }
+
+    @Provides
+    @Singleton
     fun provideOkHttpClient(
         loggingInterceptor: HttpLoggingInterceptor,
-        authInterceptor: AuthInterceptor
+        authInterceptor: AuthInterceptor,
+        tokenAuthenticator: TokenAuthenticator
     ): OkHttpClient {
         return OkHttpClient.Builder()
             .addInterceptor(loggingInterceptor)
             .addInterceptor(authInterceptor)
+            .authenticator(tokenAuthenticator)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()
