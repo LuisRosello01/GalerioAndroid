@@ -77,6 +77,9 @@ class SyncViewModel @Inject constructor(
         private const val TAG = "SyncViewModel"
     }
 
+    // Última configuración programada para evitar reprogramaciones innecesarias
+    private var lastScheduledSettings: SyncSettingsManager.SyncSettings? = null
+
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
@@ -355,14 +358,22 @@ class SyncViewModel @Inject constructor(
     /**
      * Actualiza la programación de sincronización en background
      * Solo programa si la primera sincronización manual ya fue completada
+     * y si la configuración ha cambiado
      */
     private fun updateBackgroundSyncSchedule(settings: SyncSettingsManager.SyncSettings) {
+        // Evitar reprogramar si la configuración no ha cambiado
+        if (settings == lastScheduledSettings) {
+            return
+        }
+
         // Verificar si la primera sincronización manual ya fue completada
         val app = context.applicationContext as? GalerioApplication
         if (app?.isFirstSyncCompleted() != true) {
             Log.d(TAG, "Background sync not scheduled - waiting for first manual sync")
             return
         }
+
+        lastScheduledSettings = settings
 
         if (settings.autoSyncEnabled) {
             SyncWorker.schedulePeriodicSync(
@@ -396,6 +407,33 @@ class SyncViewModel @Inject constructor(
                 }
 
             _isSyncing.value = false
+        }
+    }
+
+    /**
+     * Sincronización rápida usando solo hashes ya cacheados.
+     * Ideal para pull-to-refresh - es rápida porque no calcula hashes nuevos.
+     *
+     * @param localMediaItems Lista de archivos locales a verificar
+     * @param onComplete Callback opcional cuando termina
+     */
+    fun quickSync(localMediaItems: List<MediaItem>, onComplete: (() -> Unit)? = null) {
+        viewModelScope.launch {
+            Log.d(TAG, "Starting quick sync for ${localMediaItems.size} items")
+
+            syncRepository.quickSync(localMediaItems)
+                .onSuccess { result ->
+                    Log.d(TAG, "Quick sync completed: ${result.syncedCount} synced, ${result.pendingCount} pending")
+
+                    // Actualizar el conteo de sincronizados
+                    refreshSyncedCount()
+                }
+                .onFailure { exception ->
+                    Log.e(TAG, "Quick sync failed", exception)
+                    // No mostrar error al usuario para quick sync, es una operación silenciosa
+                }
+
+            onComplete?.invoke()
         }
     }
 

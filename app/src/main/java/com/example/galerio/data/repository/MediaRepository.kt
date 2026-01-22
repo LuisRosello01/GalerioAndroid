@@ -154,9 +154,9 @@ open class MediaRepository(
         try {
             Log.d(TAG, "Force refresh: reloading from MediaStore (preserving hashes)")
 
-            // NO eliminamos el caché para preservar los hashes
-            // Solo limpiamos el caché de sincronización de nube
-            cloudSyncRepository.clearSyncCache()
+            // NO limpiamos el caché de sincronización de nube aquí
+            // El caché de 30 segundos evitará llamadas repetidas a la API
+            // Solo se debe limpiar cuando explícitamente se quiere resincronizar
 
             // Recargar desde MediaStore
             val mediaList = mutableListOf<MediaItem>()

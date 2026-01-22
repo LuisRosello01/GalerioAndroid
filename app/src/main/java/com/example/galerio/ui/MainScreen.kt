@@ -163,11 +163,19 @@ fun MainScreen(
                 // Lista de medios (fondo)
                 MediaList(
                     modifier = Modifier.weight(1f),
-                    imageLoader = imageLoader
-                ) { uri, mediaType ->
-                    selectedMediaUri = uri
-                    isVideoSelected = mediaType == MediaType.Video
-                }
+                    imageLoader = imageLoader,
+                    onMediaClick = { uri, mediaType ->
+                        selectedMediaUri = uri
+                        isVideoSelected = mediaType == MediaType.Video
+                    },
+                    onRefresh = {
+                        // Hacer quick sync al hacer pull-to-refresh
+                        val localItems = mediaItems.filter { !it.isCloudItem }
+                        if (localItems.isNotEmpty()) {
+                            syncViewModel.quickSync(localItems)
+                        }
+                    }
+                )
             }
 
             // Si hay una imagen o video seleccionado, lo mostramos superpuesto

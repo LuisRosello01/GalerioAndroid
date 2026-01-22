@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -33,11 +34,16 @@ class AuthViewModel @Inject constructor(
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
+    // Flag para indicar si ya se verificó el estado inicial de autenticación
+    private val _isAuthCheckComplete = MutableStateFlow(false)
+    val isAuthCheckComplete: StateFlow<Boolean> = _isAuthCheckComplete.asStateFlow()
+
     // Observar directamente el flujo de isLoggedIn del AuthManager
+    // Usamos Eagerly para evitar reinicios del flujo que causen oscilaciones
     val isAuthenticated: StateFlow<Boolean> = authManager.isLoggedIn
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
+            started = SharingStarted.Eagerly,
             initialValue = false
         )
 
@@ -48,11 +54,12 @@ class AuthViewModel @Inject constructor(
                 _currentUser.value = user
             }
         }
-        // Log para depuración
+        // Marcar que el check de auth está completo después de la primera emisión
         viewModelScope.launch {
-            isAuthenticated.collect { isAuth ->
-                Log.d("AuthViewModel", "Authentication status changed: $isAuth")
-            }
+            // Esperamos a que el DataStore emita el primer valor real
+            authManager.isLoggedIn.first()
+            _isAuthCheckComplete.value = true
+            Log.d("AuthViewModel", "Auth check complete, isAuthenticated: ${isAuthenticated.value}")
         }
     }
 

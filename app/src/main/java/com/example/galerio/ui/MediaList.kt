@@ -39,7 +39,8 @@ import com.example.galerio.viewmodel.MediaViewModel
 fun MediaList(
     modifier: Modifier,
     imageLoader: ImageLoader,
-    onMediaClick: (String, MediaType) -> Unit
+    onMediaClick: (String, MediaType) -> Unit,
+    onRefresh: (() -> Unit)? = null // Callback opcional para sincronización adicional
 ) {
     val viewModel: MediaViewModel = hiltViewModel()
     val mediaItems by viewModel.mediaItems.collectAsState()
@@ -64,7 +65,10 @@ fun MediaList(
     Box(modifier = modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = isLoading,
-            onRefresh = { viewModel.refreshMedia() },
+            onRefresh = {
+                viewModel.refreshMedia()
+                onRefresh?.invoke() // Llamar callback adicional (ej: quickSync)
+            },
             state = pullToRefreshState,
             modifier = Modifier.fillMaxSize()
         ) {

@@ -33,7 +33,7 @@ interface CloudApiService {
     @GET("/logout")
     suspend fun logout(
         @Header("Authorization") token: String
-    ): Response<LogoutResponse>
+    ): Response<Unit>
 
     // ============ SINCRONIZACIÓN DE MEDIOS ============
 

@@ -60,7 +60,7 @@ class MediaViewModel @Inject constructor(
 
     init {
         loadMedia()
-        loadSyncedUris()
+        // Solo observamos los cambios - esto cargará los datos iniciales también
         observeSyncedMedia()
     }
 
@@ -73,8 +73,7 @@ class MediaViewModel @Inject constructor(
                 .onSuccess { items ->
                     _mediaItems.value = items
                     Log.d("MediaViewModel", "Loaded ${items.size} media items")
-                    // Actualizar URIs sincronizados
-                    loadSyncedUris()
+                    // No llamamos loadSyncedUris() aquí - observeSyncedMedia ya lo maneja
                 }
                 .onFailure { exception ->
                     Log.e("MediaViewModel", "Error loading media", exception)
@@ -102,7 +101,7 @@ class MediaViewModel @Inject constructor(
         viewModelScope.launch {
             syncedMediaDao.getAllSynced().collect { syncedItems ->
                 _syncedUris.value = syncedItems.map { it.localUri }.toSet()
-                Log.d("MediaViewModel", "Updated synced URIs: ${syncedItems.size} items")
+                Log.d("MediaViewModel", "Synced URIs updated: ${syncedItems.size} items")
             }
         }
     }
@@ -124,8 +123,7 @@ class MediaViewModel @Inject constructor(
                 .onSuccess { items ->
                     _mediaItems.value = items
                     Log.d("MediaViewModel", "Refresh complete: ${items.size} items")
-                    // Actualizar URIs sincronizados
-                    loadSyncedUris()
+                    // No llamamos loadSyncedUris() - observeSyncedMedia lo detectará automáticamente
                 }
                 .onFailure { exception ->
                     Log.e("MediaViewModel", "Error refreshing media", exception)

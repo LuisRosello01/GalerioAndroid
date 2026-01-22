@@ -415,6 +415,106 @@ class CloudSyncRepository @Inject constructor(
     )
 
     /**
+     * Resultado de sincronización rápida
+     */
+    data class QuickSyncResult(
+        val syncedCount: Int,
+        val pendingCount: Int,
+        val newlySyncedCount: Int
+    )
+
+    /**
+     * Sincronización rápida usando solo hashes ya cacheados en la BD.
+     * No calcula hashes nuevos, solo verifica los que ya existen.
+     * Ideal para pull-to-refresh.
+     *
+     * @param localMediaItems Lista de MediaItems locales a verificar
+     * @return QuickSyncResult con el resultado de la sincronización rápida
+     */
+    suspend fun quickSync(localMediaItems: List<MediaItem>): Result<QuickSyncResult> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "[QUICK_SYNC] Starting quick sync for ${localMediaItems.size} items")
+
+            // Verificar autenticación
+            if (!authManager.isAuthenticated()) {
+                Log.d(TAG, "[QUICK_SYNC] User not authenticated, skipping")
+                return@withContext Result.success(QuickSyncResult(0, localMediaItems.size, 0))
+            }
+
+            val token = authManager.getToken() ?: return@withContext Result.success(
+                QuickSyncResult(0, localMediaItems.size, 0)
+            )
+
+            val uriStrings = localMediaItems.map { it.uri }
+
+            // 1. Obtener solo hashes ya cacheados (NO calcular nuevos)
+            Log.d(TAG, "[QUICK_SYNC] Step 1: Getting cached hashes only...")
+
+            // Hashes desde SyncedMediaEntity
+            val syncedMediaHashes = syncedMediaDao.getByUris(uriStrings)
+                .associate { it.localUri to it.hash }
+
+            // Hashes desde MediaItemDao
+            val cachedHashPairs = mediaItemDao.getCachedHashes(uriStrings)
+            val cachedHashes = cachedHashPairs.associate { it.uri to it.hash }
+
+            // Combinar (syncedMedia tiene prioridad)
+            val allCachedHashes = cachedHashes + syncedMediaHashes
+
+            Log.d(TAG, "[QUICK_SYNC] Found ${allCachedHashes.size} cached hashes (${syncedMediaHashes.size} from synced, ${cachedHashes.size} from cache)")
+
+            if (allCachedHashes.isEmpty()) {
+                Log.d(TAG, "[QUICK_SYNC] No cached hashes found, nothing to sync")
+                return@withContext Result.success(QuickSyncResult(0, localMediaItems.size, 0))
+            }
+
+            // 2. Enviar solo los hashes cacheados al servidor
+            Log.d(TAG, "[QUICK_SYNC] Step 2: Sending ${allCachedHashes.size} hashes to server...")
+            val response = apiService.syncMedia("Bearer $token", allCachedHashes)
+
+            if (!response.isSuccessful) {
+                val errorBody = response.errorBody()?.string()
+                Log.e(TAG, "[QUICK_SYNC] Server error: ${response.code()} - $errorBody")
+                return@withContext Result.failure(Exception("Quick sync failed: ${response.message()}"))
+            }
+
+            val syncResponse = response.body()
+            val alreadySyncedFromServer = syncResponse?.alreadySynced ?: emptyMap()
+            val needsUpload = syncResponse?.needsUpload ?: emptyList()
+
+            Log.d(TAG, "[QUICK_SYNC] Server response - already_synced: ${alreadySyncedFromServer.size}, needs_upload: ${needsUpload.size}")
+
+            // 3. Actualizar registros locales
+            if (alreadySyncedFromServer.isNotEmpty()) {
+                Log.d(TAG, "[QUICK_SYNC] Step 3: Updating local sync records...")
+                saveSyncedItems(alreadySyncedFromServer, allCachedHashes)
+            }
+
+            // 4. Limpiar registros obsoletos si hay archivos que necesitan subirse
+            if (needsUpload.isNotEmpty()) {
+                Log.d(TAG, "[QUICK_SYNC] Step 4: Cleaning obsolete sync records...")
+                cleanObsoleteSyncRecords(needsUpload)
+            }
+
+            // Calcular items sin hash (pendientes de cálculo completo)
+            val itemsWithoutHash = localMediaItems.size - allCachedHashes.size
+            val totalPending = needsUpload.size + itemsWithoutHash
+
+            Log.d(TAG, "[QUICK_SYNC] Quick sync completed - synced: ${alreadySyncedFromServer.size}, pending: $totalPending (${needsUpload.size} need upload, $itemsWithoutHash without hash)")
+
+            Result.success(QuickSyncResult(
+                syncedCount = alreadySyncedFromServer.size,
+                pendingCount = totalPending,
+                newlySyncedCount = alreadySyncedFromServer.size
+            ))
+
+        } catch (e: Exception) {
+            Log.e(TAG, "[QUICK_SYNC] Error during quick sync", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * Sincroniza archivos locales con la nube usando hashes
      * @param localMediaItems Lista de MediaItems locales a sincronizar
      * @param autoUpload Si es true, sube automáticamente los archivos pendientes
